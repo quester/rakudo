@@ -1,3 +1,4 @@
+no Main;
 class Match is also {
     multi method perl() {
         self!_perl(0);

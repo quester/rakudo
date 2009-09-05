@@ -1,3 +1,4 @@
+no Main;
 # Not Yet Implemented
 #enum dayOfWeek <Sunday Monday Tuesday Wednesday Thursday Friday Saturday>;
 #enum DayOfWeek <Sunday Monday Tuesday Wednesday Thursday Friday Saturday>;

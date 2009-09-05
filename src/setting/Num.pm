@@ -1,3 +1,4 @@
+no Main;
 class Num is also {
     our Num multi method acos($base = 'radians') is export {
         my $r = Q:PIR {

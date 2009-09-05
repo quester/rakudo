@@ -1,3 +1,4 @@
+no Main;
 class Code is also {
 
 =begin item ACCEPTS

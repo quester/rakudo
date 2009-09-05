@@ -1,3 +1,4 @@
+no Main;
 # operators defined in the setting
 
 multi sub infix:<...> (@lhs, Code $generator) {

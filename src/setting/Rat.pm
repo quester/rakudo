@@ -1,3 +1,4 @@
+no Main;
 class Rat {
     has $.numerator;
     has $.denominator;

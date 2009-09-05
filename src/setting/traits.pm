@@ -1,3 +1,4 @@
+no Main;
 # XXX This wants to be more general eventually, when we support custom
 # metaclasses.
 subset Class of Object where ClassHOW | RoleHOW;

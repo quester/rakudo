@@ -1,3 +1,4 @@
+no Main;
 class List is also {
 
 =begin item fmt

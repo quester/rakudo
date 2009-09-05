@@ -1,3 +1,4 @@
+no Main;
 class Any is also {
     our Int multi method ceiling() is export {
         Q:PIR {

@@ -1,3 +1,4 @@
+no Main;
 class Buf does Positional {
     has @!values;
 

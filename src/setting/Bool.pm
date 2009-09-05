@@ -1,3 +1,4 @@
+no Main;
 class Bool is also {
 
 =begin item ACCEPTS

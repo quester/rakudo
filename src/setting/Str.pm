@@ -1,3 +1,4 @@
+no Main;
 class Str is also {
     method encode($encoding = 'UTF-8', $nf = '') {
         my @bytes = Q:PIR {

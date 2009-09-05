@@ -1,3 +1,4 @@
+no Main;
 multi caller(){
     die 'caller() is not yet implemented in Rakudo, sorry';
 }

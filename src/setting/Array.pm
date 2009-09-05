@@ -1,3 +1,4 @@
+no Main;
 # "is export" on Array does not work (it's Perl6Array internally)
 
 class Array is also {

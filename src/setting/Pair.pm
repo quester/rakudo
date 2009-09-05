@@ -1,3 +1,4 @@
+no Main;
 class Pair is also {
 
 =begin item ACCEPTS()

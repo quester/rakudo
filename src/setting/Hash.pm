@@ -1,3 +1,4 @@
+no Main;
 class Hash is also {
 
     multi method ACCEPTS(Regex $topic) {

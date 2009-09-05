@@ -1,3 +1,5 @@
+no Main;
+no Main;
 class IO is also {
 
     multi method close() is export {

@@ -1,3 +1,4 @@
+no Main;
 class Whatever is also {
     method perl() {
         return '*';

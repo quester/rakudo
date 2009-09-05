@@ -1,3 +1,4 @@
+no Main;
 class Any is also {
     multi method end() is export { $.list.elems - 1; }
 

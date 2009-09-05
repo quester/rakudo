@@ -1,3 +1,4 @@
+no Main;
 class Int is also {
     our Int multi method Int() { self }
 

@@ -1,3 +1,4 @@
+no Main;
 use v6;
 
 role IO::Socket {

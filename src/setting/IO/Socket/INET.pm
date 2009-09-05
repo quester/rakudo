@@ -1,3 +1,4 @@
+no Main;
 class IO::Socket::INET does IO::Socket {
 
     method open (Str $hostname, Int $port) {

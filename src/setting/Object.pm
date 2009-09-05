@@ -1,3 +1,4 @@
+no Main;
 subset Matcher of Object where { .can('ACCEPTS') };
 
 class Object is also {

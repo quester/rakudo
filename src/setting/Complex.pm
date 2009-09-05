@@ -1,3 +1,4 @@
+no Main;
 multi sub infix:<+>(Complex $a, $b) is default {
     Q:PIR {
         $P0 = find_lex '$a'

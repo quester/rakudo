@@ -1,3 +1,4 @@
+no Main;
 class Attribute {
     has $.name;
     has $.type;

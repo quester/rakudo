@@ -1,3 +1,4 @@
+no Main;
 class Range is also {
     has $.by = 1;
     has $.from;
