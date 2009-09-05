@@ -173,7 +173,14 @@ sub frob_setting {
         } @setting_files;
     $result .= "GEN_SETTING = \\\n  "
                . join(" \\\n  ", @gen_setting_files)
-               . "\n\n";
+               . "\n";
+
+    # rules for compiling the setting files
+    for my $i (0..$#setting_files) {
+        $result .= "$gen_setting_files[$i]: perl6_s1.pbc $setting_files[$i]\n"
+                   . "\t\$(PARROT) \$(PARROT_ARGS) perl6_s1.pbc --target=pir "
+                   . "$setting_files[$i] > $gen_setting_files[$i]\n\n";
+    }
 
     return $result;
 }
