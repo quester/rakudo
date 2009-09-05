@@ -166,7 +166,7 @@ USAGE
 .include 'src/parser/expression.pir'
 .include 'src/parser/methods.pir'
 .include 'src/parser/quote_expression.pir'
-.include 'src/gen_setting.pir'
+.include 'src/gen_setting/setting.pir'
 .include 'src/gen_actions.pir'
 .include 'src/gen_metaop.pir'
 .include 'src/gen_junction.pir'

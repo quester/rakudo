@@ -171,9 +171,14 @@ sub frob_setting {
             $a =~ s/(.*)setting/$1gen_setting/;
             $a
         } @setting_files;
+
+    push @setting_files,     'src/gen_setting/exports.pm';
+    push @gen_setting_files, 'src/gen_setting/exports.pir';
+
     $result .= "GEN_SETTING = \\\n  "
                . join(" \\\n  ", @gen_setting_files)
                . "\n";
+
 
     # rules for compiling the setting files
     for my $i (0..$#setting_files) {

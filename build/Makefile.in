@@ -26,6 +26,7 @@ MV            = @mv@
 RM_F          = @rm_f@
 MKPATH        = $(PERL) -MExtUtils::Command -e mkpath
 CHMOD         = $(PERL) -MExtUtils::Command -e chmod
+CAT           = $(PERL) -MExtUtils::Command -e cat
 
 # locations of parrot resources
 PARROT           = $(PARROT_BIN_DIR)/parrot$(EXE)
@@ -55,6 +56,9 @@ DYNPMC        = $(PMC_DIR)/$(GROUP)$(LOAD_EXT)
 DYNOPS        = \
   $(OPS_DIR)/$(OPS)$(LOAD_EXT) \
   $(OPS_DIR)/$(OPS)_switch$(LOAD_EXT) \
+
+# the default target
+all: $(PERL6EXE)
 
 SOURCES = perl6.pir \
   src/gen_grammar.pir \
@@ -209,9 +213,6 @@ CLEANUPS = \
 HARNESS_WITH_FUDGE = $(PERL) t/harness --fudge --keep-exit-code --icu=$(HAS_ICU)
 HARNESS_WITH_FUDGE_JOBS = $(HARNESS_WITH_FUDGE) --jobs
 
-# the default target
-all: $(PERL6EXE)
-
 # the install target
 install: all
 	$(MKPATH)                     $(DESTDIR)$(PERL6_LANG_DIR)/lib
@@ -232,14 +233,17 @@ perl6$(EXE): perl6.pbc
 	@win32_libparrot_copy@
 
 # the Perl 6 compiler
-perl6.pbc: perl6_s1.pbc src/gen_setting.pm
-	$(PARROT) $(PARROT_ARGS) perl6_s1.pbc --target=pir src/gen_setting.pm > src/gen_setting.pir
+perl6.pbc: perl6_s1.pbc src/gen_setting/setting.pir 
 	$(PARROT) $(PARROT_ARGS) -o perl6.pbc perl6.pir
 
 # the Perl 6 stage-1 compiler
 perl6_s1.pbc: $(PARROT) $(SOURCES) $(BUILTINS_PIR)
-	$(PERL) -e "" > src/gen_setting.pir
+	$(PERL) -e "" > src/gen_setting/setting.pir
 	$(PARROT) $(PARROT_ARGS) -o perl6_s1.pbc perl6.pir
+
+# the setting
+src/gen_setting/setting.pir: $(GEN_SETTING)
+	$(CAT) $(GEN_SETTING) > src/gen_setting/setting.pir
 
 src/gen_grammar.pir: $(PARROT) $(PERL6GRAMMAR_PBC) src/parser/grammar.pg src/parser/grammar-oper.pg
 	$(PARROT) $(PARROT_ARGS) $(PERL6GRAMMAR_PBC) \
@@ -265,8 +269,8 @@ src/gen_whatever.pir: build/gen_whatever_pir.pl
 src/gen_uprop.pir: build/gen_uprop_pir.pl
 	$(PERL) build/gen_uprop_pir.pl > src/gen_uprop.pir
 
-src/gen_setting.pm: build/gen_setting_pm.pl $(SETTING)
-	$(PERL) build/gen_setting_pm.pl $(SETTING) > src/gen_setting.pm
+src/gen_setting/exports.pm: build/gen_setting_pm.pl $(SETTING)
+	$(PERL) build/gen_setting_pm.pl $(SETTING) > src/gen_setting/exports.pm
 
 $(PMC_DIR)/objectref.pmc : $(PMC_DIR)/objectref_pmc.template build/gen_objectref_pmc.pl
 	$(PERL) -I$(PARROT_PERL_LIB) build/gen_objectref_pmc.pl $(PMC_DIR)/objectref_pmc.template \
@@ -425,4 +429,4 @@ $(OPS_DIR)/$(OPS)_switch$(LOAD_EXT): $(OPS_DIR)/$(OPS_SOURCE)
 	cd $(OPS_DIR) && $(CC) -c @cc_o_out@$(OPS)_switch$(O) $(CINCLUDES) $(CFLAGS) $(OPS)_switch.c
 	cd $(OPS_DIR) && $(LD) @ld_out@$(OPS)_switch$(LOAD_EXT) $(OPS)_switch$(O) $(LINKARGS)
 
-
+# vim: set noexpandtab :
