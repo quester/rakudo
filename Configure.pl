@@ -155,11 +155,37 @@ END
     }
 }
 
-#  Generate a Makefile from a configuration
+sub frob_setting {
+    my $t = shift;
+    my @setting_files = split /\n/, $t;
+    # ignore the first and last line, they are just the markers
+    shift @setting_files; pop @setting_files;
+
+    for (@setting_files) { s/^#\s*// };
+    my $result = "SETTING = \\\n  "
+                 . join(" \\\n  ", @setting_files)
+                 . "\n\n";
+    my @gen_setting_files = map {
+            my $a = $_;
+            $a =~ s/\.pm$/.pir/;
+            $a =~ s/(.*)setting/$1gen_setting/;
+            $a
+        } @setting_files;
+    $result .= "GEN_SETTING = \\\n  "
+               . join(" \\\n  ", @gen_setting_files)
+               . "\n\n";
+
+    return $result;
+}
+
+#  Generate  Makefile from a configuration
 sub create_makefile {
     my %config = @_;
 
     my $maketext = slurp( 'build/Makefile.in' );
+
+
+    $maketext =~ s{^(\#\s*START_SETTING_MAGIC.*?#\s*END_SETTING_MAGIC)$}{frob_setting("$1")}ems;
 
     $config{'win32_libparrot_copy'} = $^O eq 'MSWin32' ? 'copy $(PARROT_BIN_DIR)\libparrot.dll .' : '';
     $maketext =~ s/@(\w+)@/$config{$1}/g;

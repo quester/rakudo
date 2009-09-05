@@ -136,35 +136,36 @@ BUILTINS_PIR = \
   src/builtins/op.pir \
   src/builtins/system.pir \
 
-SETTING = \
-  src/setting/traits.pm \
-  src/setting/Any-list.pm \
-  src/setting/Any-num.pm \
-  src/setting/Any-str.pm \
-  src/setting/Array.pm \
-  src/setting/Attribute.pm \
-  src/setting/Bool.pm \
-  src/setting/Buf.pm \
-  src/setting/Code.pm \
-  src/setting/Complex.pm \
-  src/setting/Hash.pm \
-  src/setting/Rat.pm \
-  src/setting/Int.pm \
-  src/setting/IO.pm \
-  src/setting/IO/Socket.pm \
-  src/setting/IO/Socket/INET.pm \
-  src/setting/Junction.pm \
-  src/setting/List.pm \
-  src/setting/Match.pm \
-  src/setting/Num.pm \
-  src/setting/NYI.pm \
-  src/setting/Object.pm \
-  src/setting/Operators.pm \
-  src/setting/Pair.pm \
-  src/setting/Range.pm \
-  src/setting/Str.pm \
-  src/setting/Temporal.pm \
-  src/setting/Whatever.pm \
+#START_SETTING_MAGIC
+#  src/setting/traits.pm
+#  src/setting/Any-list.pm
+#  src/setting/Any-num.pm
+#  src/setting/Any-str.pm
+#  src/setting/Array.pm
+#  src/setting/Attribute.pm
+#  src/setting/Bool.pm
+#  src/setting/Buf.pm
+#  src/setting/Code.pm
+#  src/setting/Complex.pm
+#  src/setting/Hash.pm
+#  src/setting/Rat.pm
+#  src/setting/Int.pm
+#  src/setting/IO.pm
+#  src/setting/IO/Socket.pm
+#  src/setting/IO/Socket/INET.pm
+#  src/setting/Junction.pm
+#  src/setting/List.pm
+#  src/setting/Match.pm
+#  src/setting/Num.pm
+#  src/setting/NYI.pm
+#  src/setting/Object.pm
+#  src/setting/Operators.pm
+#  src/setting/Pair.pm
+#  src/setting/Range.pm
+#  src/setting/Str.pm
+#  src/setting/Temporal.pm
+#  src/setting/Whatever.pm
+#END_SETTING_MAGIC
 
 PMC_SOURCES = \
   $(PMC_DIR)/perl6str.pmc $(PMC_DIR)/objectref.pmc \
@@ -186,6 +187,7 @@ CLEANUPS = \
   $(DYNEXT_DIR)/*$(LOAD_EXT) \
   src/gen_*.pir \
   src/gen_*.pm \
+  $(GEN_SETTING) \
   $(PMC_DIR)/*.h \
   $(PMC_DIR)/*.c \
   $(PMC_DIR)/*.dump \
@@ -422,6 +424,5 @@ $(OPS_DIR)/$(OPS)_switch$(LOAD_EXT): $(OPS_DIR)/$(OPS_SOURCE)
 	cd $(OPS_DIR) && $(OPS2C) CSwitch --dynamic $(OPS_SOURCE)
 	cd $(OPS_DIR) && $(CC) -c @cc_o_out@$(OPS)_switch$(O) $(CINCLUDES) $(CFLAGS) $(OPS)_switch.c
 	cd $(OPS_DIR) && $(LD) @ld_out@$(OPS)_switch$(LOAD_EXT) $(OPS)_switch$(O) $(LINKARGS)
-
 
 
