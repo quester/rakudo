@@ -25,6 +25,9 @@ This is the base file for the Rakudo Perl 6 compiler.
     exit 1
   startup_ok:
 
+    # Do dynop initialization tasks.
+    rakudo_dynop_setup
+
     .local pmc p6meta
     load_bytecode 'PCT.pbc'
     $P0 = get_root_global ['parrot'], 'P6metaclass'
@@ -38,6 +41,10 @@ This is the base file for the Rakudo Perl 6 compiler.
     exports = split ' ', '!DISPATCH_JUNCTION_MULTI'
     parrotns.'export_to'(hllns, imports)
     hllns.'export_to'(parrotns, exports)
+
+    # to ease transition, make Mu and alias to Object for now
+    $P2 = get_hll_global 'Object'
+    set_hll_global 'Mu', $P2
 .end
 
 
@@ -61,6 +68,7 @@ Creates the Perl 6 compiler by subclassing a C<PCT::HLLCompiler> object.
     .local pmc p6meta, perl6
     p6meta = get_hll_global ['Perl6Object'], '$!P6META'
     perl6 = p6meta.'new_class'('Perl6::Compiler', 'parent'=>'PCT::HLLCompiler')
+    p6meta.'new_class'('Perl6::Compiler::Signature', 'attr'=>'$!entries $!default_type $!lexicals')
 
     load_bytecode 'config.pbc'
 
@@ -115,7 +123,7 @@ USAGE
     $P0 .= $S0
   _handler:
     pop_eh
-    $P0 .= ".\n\nCopyright 2006-2009, The Perl Foundation.\n"
+    $P0 .= ".\n\nCopyright 2006-2010, The Perl Foundation.\n"
     setattribute perl6, '$version', $P0
 
     $P0 = box .RAKUDO_HLL
@@ -168,6 +176,7 @@ USAGE
 .include 'src/parser/quote_expression.pir'
 .include 'src/gen_setting/setting.pir'
 .include 'src/gen_actions.pir'
+.include 'src/gen_signature_pm.pir'
 .include 'src/gen_metaop.pir'
 .include 'src/gen_junction.pir'
 .include 'src/gen_whatever.pir'
@@ -324,20 +333,21 @@ and report exceptions.
 .sub 'format_location'
     .param pmc cur_block
     .local pmc anno
+    .local string file
+    .local string line
     anno = cur_block['annotations']
     if null anno goto unknown
-    $S1 = anno['file']
-    if $S1 != "" goto have_file
-    $S1 = "<unknown>"
+    file = anno['file']
+    if file != "" goto have_file
+    file = "<unknown>"
   have_file:
-    $S0 = concat "(", $S1
-    concat $S0, ":"
-    $S1 = anno['line']
-    if $S1 != "" goto have_line
-    if $S0 == "(<unknown>:" goto unknown
-    $S1 = "<unknown>"
+    line = anno['line']
+    if line != "" goto have_line
+    line = "<unknown>"
   have_line:
-    concat $S0, $S1
+    $S0 = concat "(file " , file
+    concat $S0, ", line "
+    concat $S0, line
     concat $S0, ")"
     .return ($S0)
   unknown:
@@ -375,6 +385,7 @@ to the Perl 6 compiler.
     $P0()
     goto iter_loop
   iter_end:
+    exit 0
 .end
 
 
@@ -431,7 +442,7 @@ to the Perl 6 compiler.
     if null retval goto fail
     library = new 'Hash'
     library['name'] = name
-    inc_hash = get_hll_global '%INC'
+    inc_hash = get_hll_global ['PROCESS'], '%INC'
     $S0 = inc_hash[$S0]
     library['filename'] = $S0
     $P0 = get_hll_namespace name
@@ -474,6 +485,7 @@ Currently this does the equivalent of EXPORTALL on the core namespaces.
 .include 'src/parrot/P6role.pir'
 .include 'src/parrot/Protoobject.pir'
 .include 'src/parrot/misc.pir'
+.include 'src/parrot/signature.pir'
 .include 'src/parrot/state.pir'
 .include 'src/gen_uprop.pir'
 

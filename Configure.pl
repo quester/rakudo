@@ -19,8 +19,8 @@ MAIN: {
     }
 
     # Determine the revision of Parrot we require
-    open my $REQ, "build/PARROT_REVISION"
-      || die "cannot open build/PARROT_REVISION\n";
+    open my $REQ, '<', "build/PARROT_REVISION"
+      or die "cannot open build/PARROT_REVISION: $!\n";
     my ($reqsvn, $reqpar) = split(' ', <$REQ>);
     $reqsvn += 0;
     close $REQ;
@@ -29,7 +29,9 @@ MAIN: {
     if ($options{'gen-parrot'}) {
         my @opts    = @{ $options{'gen-parrot-option'} || [] };
         my $prefix  = $options{'gen-parrot-prefix'} || cwd()."/parrot_install";
-        my @command = ($^X, "build/gen_parrot.pl", "--prefix=$prefix", @opts);
+        # parrot's Configure.pl mishandles win32 backslashes in --prefix
+        $prefix =~ s{\\}{/}g;
+        my @command = ($^X, "build/gen_parrot.pl", "--prefix=$prefix", ($^O !~ /win32/i ? "--optimize" : ()), @opts);
 
         print "Generating Parrot ...\n";
         print "@command\n\n";
@@ -42,6 +44,10 @@ MAIN: {
         ../../parrot_config
         parrot_config
     );
+    if (exists $options{'gen-parrot-prefix'}) {
+        unshift @parrot_config_exe,
+                $options{'gen-parrot-prefix'} . '/bin/parrot_config';
+    }
 
     if ($options{'parrot-config'} && $options{'parrot-config'} ne '1') {
         @parrot_config_exe = ($options{'parrot-config'});
@@ -137,10 +143,7 @@ sub verify_parrot {
         "$PARROT_INCLUDE_DIR",
         "$PARROT_INCLUDE_DIR/pmc",
     );
-    my @missing;
-    for my $reqfile (@required_files) {
-        push @missing, "    $reqfile" unless -e $reqfile;
-    }
+    my @missing = map { "    $_" } grep { ! -e } @required_files;
     if (@missing) {
         my $missing = join("\n", @missing);
         die <<"END";

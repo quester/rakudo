@@ -1,6 +1,6 @@
 /*
 $Id$
-Copyright (C) 2008-2009, The Perl Foundation.
+Copyright (C) 2008-2010, The Perl Foundation.
 
 =head1 NAME
 
@@ -45,10 +45,14 @@ access during a dispatch.
 */
 
 #include "parrot/oplib/ops.h"
+#include "../binder/bind.h"
+#include "pmc_p6lowlevelsig.h"
 
+PMC *get_all_candidates_with_cur_args(PARROT_INTERP, PMC *multi);
 
 typedef struct candidate_info {
     PMC   *sub;         /* The sub that is the candidate. */
+    PMC   *signature;   /* The signature of the sub. */
     PMC  **types;       /* Class or role type constraints for each parameter. */
     PMC  **constraints; /* Refinement type constraints for each parameter
                          * (if there are many, this will be a junction). */
@@ -56,6 +60,9 @@ typedef struct candidate_info {
     INTVAL min_arity;   /* The number of required positonal arguments. */
     INTVAL max_arity;   /* # of required and optional positional arguments. */
     INTVAL bind_check;  /* A true value if any parameters have constraints and/or are named. */
+    STRING *req_named;  /* Name of one required named argument, if any. This is to allow us
+                         * to quickly rule out candidates disambiguated by a required named
+                         * argument, as is the common case for traits. */
 } candidate_info;
 
 /*
@@ -98,147 +105,21 @@ from the outside.
 
 =over 4
 
-=item C<static void get_args(PARROT_INTERP, PMC **pos_args, PMC **named_args)>
+=item C<static PMC *get_args(PARROT_INTERP)>
 
-Gets a list of the arguments that are being passed, taking them from the
-registers and the constants table and flattening any :flat arguments as
-required. Hands back a ResizablePMCArray of the positional parameters and
-a Hash of the named parameters.
+Gets and returns the currnet capture holding the arguments we're being
+called with.
 
 =cut
 
 */
 
-PARROT_WARN_UNUSED_RESULT
-PARROT_CANNOT_RETURN_NULL
-static void
-get_args(PARROT_INTERP, PMC **pos_args, PMC **named_args)
+static PMC *
+get_args(PARROT_INTERP)
 {
-    INTVAL sig_len, i;
-    PMC    *arg;
-    PMC    *sig;
-    STRING *name      = NULL;
-
-    /* Initialize results list. */
-    PMC    * const arg_list       = pmc_new(interp, enum_class_ResizablePMCArray);
-    PMC    * const arg_hash       = pmc_new(interp, enum_class_Hash);
-
-    /* Get constants table for current segment, so we can look up sig and any
-     * constant arguments. */
-    PackFile_Constant **constants = interp->code->const_table->constants;
-
-    /* Make sure we have a place to source the current arguments from. */
-    const opcode_t *args_op = interp->current_args;
-    if (!args_op)
-        Parrot_ex_throw_from_c_args(interp, NULL, 1,
-            "No arguments found to dispatch on");
-    PARROT_ASSERT(*args_op == PARROT_OP_set_args_pc);
-
-    /* Get the (Parrot calling conventions) signature PMC. */
-    ++args_op;
-    sig = constants[*args_op]->u.key;
-    ASSERT_SIG_PMC(sig);
-    sig_len = VTABLE_elements(interp, sig);
-
-    /* Set PMC arguments. */
-    *pos_args   = arg_list;
-    *named_args = arg_hash;
-
-    /* If we have a zero-length signature, we're done. */
-    if (sig_len == 0)
-        return;
-
-    /* Otherwise, we have arguments. */
-    ++args_op;
-    for (i = 0; i < sig_len; ++i, ++args_op) {
-        const INTVAL type = VTABLE_get_integer_keyed_int(interp, sig, i);
-        const int idx     = *args_op;
-
-        /* If we find a named argument, grab its name; the next thing will
-         * be the value. */
-        if ((type & PARROT_ARG_NAME) && !(type & PARROT_ARG_FLATTEN)) {
-            name = constants[idx]->u.string;
-            continue;
-        }
-
-        /* Put the argument in the list. For some arguments, we must box them into
-         * a PMC to be able to have them in the list. XXX Use Perl 6 box types. */
-        switch (type & (PARROT_ARG_TYPE_MASK | PARROT_ARG_FLATTEN | PARROT_ARG_NAME)) {
-            case PARROT_ARG_INTVAL:
-                /* Integer constants always in register. */
-                arg = pmc_new(interp, enum_class_Integer);
-                VTABLE_set_integer_native(interp, arg, REG_INT(interp, idx));
-                if (name)
-                    VTABLE_set_pmc_keyed_str(interp, arg_hash, name, arg);
-                else
-                    VTABLE_push_pmc(interp, arg_list, arg);
-                break;
-            case PARROT_ARG_FLOATVAL:
-                /* May have value in an N register or constants table. */
-                arg = pmc_new(interp, enum_class_Float);
-                if ((type & PARROT_ARG_CONSTANT))
-                    VTABLE_set_number_native(interp, arg, constants[idx]->u.number);
-                else
-                    VTABLE_set_number_native(interp, arg, REG_NUM(interp, idx));
-                if (name)
-                    VTABLE_set_pmc_keyed_str(interp, arg_hash, name, arg);
-                else
-                    VTABLE_push_pmc(interp, arg_list, arg);
-                break;
-            case PARROT_ARG_STRING:
-                /* May have value in an S register or constnats table. */
-                arg = pmc_new(interp, enum_class_String);
-                if ((type & PARROT_ARG_CONSTANT))
-                    VTABLE_set_string_native(interp, arg, constants[idx]->u.string);
-                else
-                    VTABLE_set_string_native(interp, arg, REG_STR(interp, idx));
-                if (name)
-                    VTABLE_set_pmc_keyed_str(interp, arg_hash, name, arg);
-                else
-                    VTABLE_push_pmc(interp, arg_list, arg);
-                break;
-            case PARROT_ARG_PMC:
-                /* May have value in a P register or constants table. */
-                if ((type & PARROT_ARG_CONSTANT))
-                    arg = constants[idx]->u.key;
-                else
-                    arg = REG_PMC(interp, idx);
-                if (name)
-                    VTABLE_set_pmc_keyed_str(interp, arg_hash, name, arg);
-                else
-                    VTABLE_push_pmc(interp, arg_list, arg);
-                break;
-            case PARROT_ARG_FLATTEN | PARROT_ARG_PMC: {
-                /* Expand flattening arguments; just loop over the array that
-                 * is being flattened and get all of the entries within it. */
-                int j, n;
-                const int idx = *args_op;
-                arg           = REG_PMC(interp, idx);
-                n             = VTABLE_elements(interp, arg);
-                for (j = 0; j < n; ++j)
-                    VTABLE_push_pmc(interp, arg_list,
-                        VTABLE_get_pmc_keyed_int(interp, arg, j));
-                break;
-            }
-            case PARROT_ARG_FLATTEN | PARROT_ARG_PMC | PARROT_ARG_NAME: {
-                /* Expand flattening arguments; iterate over the hash. */
-                const int idx = *args_op;
-                PMC *it;
-                arg           = REG_PMC(interp, idx);
-                it            = VTABLE_get_iter(interp, arg);
-                while (VTABLE_get_bool(interp, it)) {
-                    name = VTABLE_shift_string(interp, it);
-                    VTABLE_set_pmc_keyed_str(interp, arg_hash, name,
-                            VTABLE_get_pmc_keyed_str(interp, arg, name));
-                }
-                break;
-            }
-            default:
-                Parrot_ex_throw_from_c_args(interp, NULL, 1,
-                        "Unknown signature type %d in Parrot_Perl6MultiSub_get_args", type);
-                break;
-        }
-    }
+    PMC *ctx = CURRENT_CONTEXT(interp);
+    PMC *sig = Parrot_pcc_get_signature(interp, ctx);
+    return sig;
 }
 
 
@@ -276,14 +157,15 @@ static INTVAL is_narrower(PARROT_INTERP, candidate_info *a, candidate_info *b) {
              * tied if neither has constraints or both have constraints. */
             if (!PMC_IS_NULL(a->constraints[i]) && PMC_IS_NULL(b->constraints[i]))
                 narrower++;
-            else if (PMC_IS_NULL(a->constraints[i]) && PMC_IS_NULL(b->constraints[i]) ||
-                     !PMC_IS_NULL(a->constraints[i]) && !PMC_IS_NULL(b->constraints[i]))
+            else if ((PMC_IS_NULL(a->constraints[i]) && PMC_IS_NULL(b->constraints[i]))
+                 ||
+                    (!PMC_IS_NULL(a->constraints[i]) && !PMC_IS_NULL(b->constraints[i])))
                 tied++;
         }
         else {
             PMC * const accepts_meth_a = VTABLE_find_method(interp, type_obj_b, ACCEPTS);
-            PMC * const result_n = (PMC *) Parrot_run_meth_fromc_args(interp, accepts_meth_a,
-                    type_obj_b, ACCEPTS, "PP", type_obj_a);
+            PMC * result_n             = PMCNULL;
+            Parrot_ext_call(interp, accepts_meth_a, "PiP->P", type_obj_b, type_obj_a, &result_n);
             if (VTABLE_get_integer(interp, result_n)) {
                 /* Narrower - note it and we're done. */
                 narrower++;
@@ -291,12 +173,10 @@ static INTVAL is_narrower(PARROT_INTERP, candidate_info *a, candidate_info *b) {
             else {
                 /* Make sure it's tied, rather than the other way around. */
                 PMC * const accepts_meth_b = VTABLE_find_method(interp, type_obj_a, ACCEPTS);
-                PMC * const result_w = (PMC *) Parrot_run_meth_fromc_args(interp,
-                        accepts_meth_b, type_obj_a,
-                        ACCEPTS, "PP", type_obj_b);
-                if (!VTABLE_get_integer(interp, result_w)) {
+                PMC * result_w             = PMCNULL;
+                Parrot_ext_call(interp, accepts_meth_b, "PiP->P", type_obj_a, type_obj_b, &result_w);
+                if (!VTABLE_get_integer(interp, result_w))
                     tied++;
-                }
             }
         }
     }
@@ -342,9 +222,8 @@ static candidate_info** sort_candidates(PARROT_INTERP, PMC *candidates, PMC **pr
             num_candidates, candidate_graph_node*);
     INTVAL insert_pos = 0;
     for (i = 0; i < num_candidates; i++) {
-        PMC *signature;
-        PMC *params;
-        PMC *meth;
+        PMC *signature, *p6_do;
+        struct llsig_element **sig_elem_info;
         candidate_info *info;
         INTVAL sig_elems;
         INTVAL j;
@@ -367,52 +246,62 @@ static candidate_info** sort_candidates(PARROT_INTERP, PMC *candidates, PMC **pr
         info = mem_allocate_zeroed_typed(candidate_info);
         info->sub = candidate;
 
-        /* Arity. */
-        info->min_arity = VTABLE_get_integer(interp,
-                VTABLE_inspect_str(interp, candidate, CONST_STRING(interp, "pos_required")));
-        if (VTABLE_get_integer(interp, VTABLE_inspect_str(interp, candidate,
-               CONST_STRING(interp, "pos_slurpy"))))
-            info->max_arity = SLURPY_ARITY;
-        else
-            info->max_arity = info->min_arity + VTABLE_get_integer(interp,
-                    VTABLE_inspect_str(interp, candidate, CONST_STRING(interp, "pos_optional")));
+        /* Get hold of signature. */
+        p6_do = candidate->vtable->base_type == enum_class_Sub ? candidate :
+                VTABLE_get_attr_str(interp, candidate, CONST_STRING(interp, "$!do"));
+        signature = VTABLE_getprop(interp, p6_do, CONST_STRING(interp, "$!signature"));
+        if (PMC_IS_NULL(signature)) {
+            /* No signature - need to lazily generate it. */
+            PMC *p6_code_obj = VTABLE_getprop(interp, p6_do, string_from_literal(interp, "$!p6type"));
+            PMC *sig_meth    = VTABLE_find_method(interp, p6_code_obj, string_from_literal(interp, "signature"));
+            PMC *result;
+            Parrot_ext_call(interp, sig_meth, "P->P", p6_code_obj, &result);
+            signature = VTABLE_getprop(interp, p6_do, string_from_literal(interp, "$!signature"));
+        }
+        info->signature = signature;
+        GETATTR_P6LowLevelSig_elements(interp, signature, sig_elem_info);
+        GETATTR_P6LowLevelSig_num_elements(interp, signature, sig_elems);
 
         /* Type information. */
-        signature         = VTABLE_getprop(interp, candidate, CONST_STRING(interp, "$!signature"));
-        meth              = VTABLE_find_method(interp, signature, CONST_STRING(interp, "params"));
-        params            = (PMC*)Parrot_run_meth_fromc_args(interp, meth, signature,
-                CONST_STRING(interp, "params"), "P");
-        sig_elems         = VTABLE_elements(interp, params);
         info->types       = mem_allocate_n_zeroed_typed(sig_elems + 1, PMC*);
         info->constraints = mem_allocate_n_zeroed_typed(sig_elems + 1, PMC*);
         significant_param = 0;
         for (j = 0; j < sig_elems; j++) {
-            /* Look up various bits from the signature. */
-            PMC * const param       = VTABLE_get_pmc_keyed_int(interp, params, j);
-            PMC * const type        = VTABLE_get_pmc_keyed_str(interp, param,
-                    CONST_STRING(interp, "nom_type"));
-            PMC * const constraints = VTABLE_get_pmc_keyed_str(interp, param,
-                    CONST_STRING(interp, "cons_type"));
-            PMC * const multi_inv   = VTABLE_get_pmc_keyed_str(interp, param,
-                    CONST_STRING(interp, "multi_invocant"));
-            PMC * const named       = VTABLE_get_pmc_keyed_str(interp, param,
-                    CONST_STRING(interp, "named"));
-            PMC * const slurpy      = VTABLE_get_pmc_keyed_str(interp, param,
-                    CONST_STRING(interp, "slurpy"));
-
-            /* If it's named, and not slurpy, don't need its type info but we will
+            /* If it's named (and not slurpy) don't need its type info but we will
              * need a bindability check during the dispatch for it. */
-            if (!PMC_IS_NULL(named) && PMC_IS_NULL(slurpy)) {
+            if (!PMC_IS_NULL(sig_elem_info[j]->named_names)) {
+                if (!(sig_elem_info[j]->flags & SIG_ELEM_IS_OPTIONAL))
+                    info->req_named = VTABLE_get_string_keyed_int(interp, sig_elem_info[j]->named_names, 0);
                 info->bind_check = 1;
                 continue;
             }
 
-            /* Record type info for this parameter. */
-            info->types[significant_param] = type;
-            info->constraints[significant_param] = constraints;
-            if (!PMC_IS_NULL(constraints))
+            /* If it's got a sub-signature, also need a bind check. */
+            if (!PMC_IS_NULL(sig_elem_info[j]->sub_signature))
                 info->bind_check = 1;
-            if (!PMC_IS_NULL(multi_inv) && VTABLE_get_bool(interp, multi_inv))
+
+            /* If it's named slurpy, we're done. */
+            if (sig_elem_info[j]->flags & SIG_ELEM_SLURPY_NAMED)
+                break;
+
+            /* Otherwise, positional or slurpy and contributes to arity. */
+            if (sig_elem_info[j]->flags & SIG_ELEM_SLURPY_POS) {
+                info->max_arity = SLURPY_ARITY;
+            }
+            else if (sig_elem_info[j]->flags & SIG_ELEM_IS_OPTIONAL) {
+                info->max_arity++;
+            }
+            else {
+                info->max_arity++;
+                info->min_arity++;
+            }
+
+            /* Record type info for this parameter. */
+            info->types[significant_param] = sig_elem_info[j]->nominal_type;
+            info->constraints[significant_param] = sig_elem_info[j]->post_constraints;
+            if (!PMC_IS_NULL(info->constraints[significant_param]))
+                info->bind_check = 1;
+            if (sig_elem_info[j]->flags & SIG_ELEM_MULTI_INVOCANT)
                 info->num_types++;
             significant_param++;
         }
@@ -531,9 +420,35 @@ static INTVAL has_junctional_args(PARROT_INTERP, PMC *args) {
 
 /*
 
+=item C<static STRING* dump_signature(PARROT_INTERP, STRING *so_far, PMC *sub)>
+
+Utility for getting hold of the signature dump for a sub, which aids us in
+producing awesomer errors.
+
+=cut
+
+*/
+static STRING* dump_signature(PARROT_INTERP, STRING *so_far, PMC *sub) {
+    STRING * const sig_name  = CONST_STRING(interp, "signature");
+    STRING * const perl_name = CONST_STRING(interp, "perl");
+    STRING * const newline   = CONST_STRING(interp, "\n");
+    PMC    * sig_meth, *sig_obj, *perl_meth;
+    STRING *sig_perl;
+    sig_meth = VTABLE_find_method(interp, sub, sig_name);
+    Parrot_ext_call(interp, sig_meth, "Pi->P", sub, &sig_obj);
+    perl_meth = VTABLE_find_method(interp, sig_obj, perl_name);
+    Parrot_ext_call(interp, perl_meth, "Pi->S", sig_obj, &sig_perl);
+    so_far = Parrot_str_append(interp, so_far, sig_perl);
+    so_far = Parrot_str_append(interp, so_far, newline);
+    return so_far;
+}
+
+
+/*
+
 =item C<static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates,
-                                PMC *proto, PMC *pos_args, PMC *named_args, int many,
-                                int num_candidates, opcode_t *next, MMD_Cache *cache)>
+                                PMC *proto, PMC *capture, int many, int num_candidates,
+                                opcode_t *next, MMD_Cache *cache)>
 
 Runs the Perl 6 MMD algorithm. If many is set to a true value, returns a
 ResizablePMCArray of all possible candidates, which may be empty. If many
@@ -546,12 +461,12 @@ candidates or that it was ambiguous if there were tied candidates.
 */
 
 static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, PMC *proto,
-        PMC *pos_args, PMC *named_args, int many, int num_candidates, opcode_t *next,
+        PMC *capture, int many, int num_candidates, opcode_t *next,
         MMD_Cache *cache) {
     INTVAL           type_mismatch;
     STRING * const   ACCEPTS          = CONST_STRING(interp, "ACCEPTS");
     INTVAL           possibles_count  = 0;
-    const INTVAL     num_args         = VTABLE_elements(interp, pos_args);
+    const INTVAL     num_args         = VTABLE_elements(interp, capture);
     candidate_info **cur_candidate    = candidates;
     candidate_info **possibles        = mem_allocate_n_typed(num_candidates,
                                          candidate_info *);
@@ -568,34 +483,64 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
             /* We've hit the end of a tied group now. If any of them have a
              * bindability check requirement, we'll do any of those now. */
             if (possibles_count) {
-                PMC *checker = Parrot_find_global_n(interp, Parrot_get_ctx_HLL_namespace(interp),
-                        CONST_STRING(interp, "!bindability_checker"));
-                PMC *bind_check_result;
+                INTVAL bind_check_result = 0;
                 candidate_info **new_possibles = NULL;
                 INTVAL new_possibles_count = 0;
                 INTVAL i;
 
                 for (i = 0; i < possibles_count; i++) {
-                    if (possibles[i]->bind_check) {
-                        /* We have one that needs a bindability check. Thus this will
-                         * not be a pure nominal type result. */
-                        pure_type_result = 0;
+                    interp->current_cont = NEED_CONTINUATION;
+                    Parrot_pcc_set_signature(interp, CURRENT_CONTEXT(interp), NULL);
 
-                        /* Run the bindability check. */
-                        bind_check_result = Parrot_runops_fromc_args(interp, checker, "PPPP",
-                                possibles[i]->sub, pos_args, named_args);
+                    /* First, if there's a required named parameter and it was not
+                     * passed, we can very quickly eliminate this candidate without
+                     * doing a full bindability check. */
+                    if (possibles[i]->req_named) {
+                        if (!VTABLE_exists_keyed_str(interp, capture, possibles[i]->req_named)) {
+                            /* Required named arg not passed, so we eliminate it right
+                             * here. Flag that we've built a list of new possibles, and
+                             * that this was not a pure type-based result that we can
+                             * cache. */
+                            if (!new_possibles)
+                                new_possibles = mem_allocate_n_typed(num_candidates, candidate_info *);
+                            pure_type_result = 0;
+                            continue;
+                        }
+                    }
+
+                    /* Otherwise, may need full bind check. */
+                    if (possibles[i]->bind_check) {
+                        /* We'll invoke the sub (but not re-enter the runloop) and
+                         * then attempt to bind the signature. */
+                        PMC      *invokee   = possibles[i]->sub->vtable->base_type == enum_class_Sub ?
+                                possibles[i]->sub : VTABLE_get_attr_str(interp, possibles[i]->sub, CONST_STRING(interp, "$!do"));
+                        opcode_t *where     = VTABLE_invoke(interp, invokee, next);
+                        PMC      *lexpad    = Parrot_pcc_get_lex_pad(interp, CURRENT_CONTEXT(interp));
+                        PMC      *signature = possibles[i]->signature;
+                        INTVAL bind_check_result;
+                        bind_check_result = Rakudo_binding_bind_signature(interp, lexpad,
+                              signature, capture, 1, NULL);
+
+                        /* XXX In the future, we can actually keep the context if we only
+                         * need one candidate, and then hand back the current PC and mark
+                         * the context as not needing a bind. Just needs some code re-org.
+                         * For now, we always clean up the ret-cont again. */
+                        where = VTABLE_invoke(interp, Parrot_pcc_get_continuation(interp, CURRENT_CONTEXT(interp)), where);
 
                         /* If we haven't got a possibles storage space, allocate it now. */
                         if (!new_possibles)
                             new_possibles = mem_allocate_n_typed(num_candidates, candidate_info *);
 
-                        /* If we got a non-null result, need to put this one onto the list.
-                         * XXX actually we should keep around the resume cont that we get
-                         * here and invoke that to avoid dupe type checks. */
-                        if (!PMC_IS_NULL(bind_check_result)) {
+                        /* If we don't fail, need to put this one onto the list
+                         * (note that needing a junction dispatch is OK). */
+                        if (bind_check_result != BIND_RESULT_FAIL) {
                             new_possibles[new_possibles_count] = possibles[i];
                             new_possibles_count++;
                         }
+                        
+                        /* Since we had to do a bindability check, this is not
+                         * a result we can cache on nominal type. */
+                        pure_type_result = 0;
                     }
                 }
 
@@ -637,13 +582,11 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
         type_mismatch = 0;
 
         for (i = 0; i < type_check_count; i++) {
-            PMC * const param        = VTABLE_get_pmc_keyed_int(interp, pos_args, i);
+            PMC * const param        = VTABLE_get_pmc_keyed_int(interp, capture, i);
             PMC * const type_obj     = (*cur_candidate)->types[i];
             PMC * const accepts_meth = VTABLE_find_method(interp, type_obj, ACCEPTS);
-            PMC * const result       = (PMC *)Parrot_run_meth_fromc_args(interp,
-                                    accepts_meth, type_obj, ACCEPTS,
-                                    "PP", param);
-
+            PMC * result             = PMCNULL;
+            Parrot_ext_call(interp, accepts_meth, "PiP->P", type_obj, param, &result);
             if (!VTABLE_get_integer(interp, result)) {
                 type_mismatch = 1;
                 break;
@@ -694,11 +637,11 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
             cache = Parrot_mmd_cache_create(interp);
             SETATTR_Perl6MultiSub_cache_single(interp, self, cache);
         }
-        Parrot_mmd_cache_store_by_values(interp, cache, "", pos_args, possibles[0]->sub);
+        Parrot_mmd_cache_store_by_values(interp, cache, "", capture, possibles[0]->sub);
     }
 
     /* Perhaps we found nothing but have juncitonal arguments? */
-    if (possibles_count == 0 && has_junctional_args(interp, pos_args)) {
+    if (possibles_count == 0 && has_junctional_args(interp, capture)) {
         /* Look up multi junction dispatcher, clone it, attach this multi-sub
          * as a property and hand that back as the dispatch result. We also
          * stick it in the MMD cache for next time around. */
@@ -707,7 +650,7 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
         sub = VTABLE_clone(interp, sub);
         VTABLE_setprop(interp, sub, CONST_STRING(interp, "sub"), self);
         if (cache && many == MMD_ONE_RESULT)
-            Parrot_mmd_cache_store_by_values(interp, cache, "", pos_args, sub);
+            Parrot_mmd_cache_store_by_values(interp, cache, "", capture, sub);
         junctional_res = sub;
     }
 
@@ -727,30 +670,31 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
             return proto;
         }
         else if (possibles_count == 0) {
+            /* Get signatures of all possible candidates. We dump them in the
+             * order in which we search for them. */
+            STRING *signatures = Parrot_str_new(interp, "", 0);
+            cur_candidate = candidates;
+            while (1) {
+                if (!cur_candidate[0] && !cur_candidate[1])
+                    break;
+                if (cur_candidate[0])
+                    signatures = dump_signature(interp, signatures, (*cur_candidate)->sub);
+                cur_candidate++;
+            }
+
             mem_sys_free(possibles);
             Parrot_ex_throw_from_c_args(interp, next, 1,
-                "No applicable candidates found to dispatch to for '%Ss'",
-                    VTABLE_get_string(interp, candidates[0]->sub));
+                "No applicable candidates found to dispatch to for '%Ss'. Available candidates are:\n%Ss",
+                    VTABLE_get_string(interp, candidates[0]->sub),
+                    signatures);
         }
         else {
             /* Get signatures of ambiguous candidates. */
-            STRING * const sig_name  = CONST_STRING(interp, "signature");
-            STRING * const perl_name = CONST_STRING(interp, "perl");
-            STRING * const newline   = CONST_STRING(interp, "\n");
-
-            STRING *signatures       = Parrot_str_new(interp, "", 0);
+            STRING *signatures = Parrot_str_new(interp, "", 0);
             INTVAL i;
-
-            for (i = 0; i < possibles_count; i++) {
-                PMC    * const sig_meth  = VTABLE_find_method(interp, possibles[i]->sub, sig_name);
-                PMC    * const sig_obj   = (PMC *)Parrot_run_meth_fromc_args(interp, sig_meth,
-                        possibles[i]->sub, sig_name, "P");
-                PMC    * const perl_meth = VTABLE_find_method(interp, sig_obj, perl_name);
-                STRING * const sig_perl  = (STRING *)Parrot_run_meth_fromc_args(interp, perl_meth,
-                        sig_obj, perl_name, "S");
-                signatures = Parrot_str_append(interp, signatures, sig_perl);
-                signatures = Parrot_str_append(interp, signatures, newline);
-            }
+            for (i = 0; i < possibles_count; i++)
+                signatures = dump_signature(interp, signatures, possibles[i]->sub);
+            
             mem_sys_free(possibles);
             Parrot_ex_throw_from_c_args(interp, next, 1,
                 "Ambiguous dispatch to multi '%Ss'. Ambiguous candidates had signatures:\n%Ss",
@@ -778,7 +722,7 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
                 cache = Parrot_mmd_cache_create(interp);
                 SETATTR_Perl6MultiSub_cache_many(interp, self, cache);
             }
-            Parrot_mmd_cache_store_by_values(interp, cache, "", pos_args, results);
+            Parrot_mmd_cache_store_by_values(interp, cache, "", capture, results);
         }
 
         return results;
@@ -788,7 +732,7 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
 
 /*
 
-=item C<static PMC *find_many_candidates_with_arg_list(PARROT_INTERP, PMC *self, PMC *pos_args, PMC *named_args)>
+=item C<static PMC *find_many_candidates_with_arg_list(PARROT_INTERP, PMC *self, PMC *capture)>
 
 Uses the given argument list to find all possible candidates that we could run, sorted
 in order of preference.
@@ -796,26 +740,22 @@ in order of preference.
 =cut
 
 */
-static PMC *find_many_candidates_with_arg_list(PARROT_INTERP, PMC *SELF, PMC *pos_args, PMC *named_args) {
+static PMC *find_many_candidates_with_arg_list(PARROT_INTERP, PMC *SELF, PMC *capture) {
     candidate_info **candidates = NULL;
     PMC             *unsorted;
     PMC             *proto;
     PMC             *results    = PMCNULL;
     MMD_Cache       *cache;
 
-    /* Need to make sure a wobload of globals don't get destroyed. */
-    PMC      * const saved_ccont       = interp->current_cont;
-    opcode_t * const current_args      = interp->current_args;
-    opcode_t * const current_params    = interp->current_params;
-    opcode_t * const current_returns   = interp->current_returns;
-    PMC      * const args_signature    = interp->args_signature;
-    PMC      * const params_signature  = interp->params_signature;
-    PMC      * const returns_signature = interp->returns_signature;
+    /* Need to make sure some bits don't get destroyed. */
+    PMC      * ctx               = CURRENT_CONTEXT(interp);
+    PMC      * const saved_ccont = interp->current_cont;
+    PMC      * const saved_sig   = Parrot_pcc_get_signature(interp, ctx);
 
     /* See if we have a cache entry. */
     GETATTR_Perl6MultiSub_cache_many(interp, SELF, cache);
     if (cache)
-        results = Parrot_mmd_cache_lookup_by_values(interp, cache, "", pos_args);
+        results = Parrot_mmd_cache_lookup_by_values(interp, cache, "", capture);
     if (PMC_IS_NULL(results)) {
         /* Make sure that we have a candidate list built. */
         GETATTR_Perl6MultiSub_candidates_sorted(interp, SELF, candidates);
@@ -834,40 +774,19 @@ static PMC *find_many_candidates_with_arg_list(PARROT_INTERP, PMC *SELF, PMC *po
 
         /* Now do the dispatch on the args we have been supplied with, and
          * get back a PMC array of possibles. */
-        results = do_dispatch(interp, SELF, candidates, proto, pos_args, named_args,
+        results = do_dispatch(interp, SELF, candidates, proto, capture,
                  MMD_MANY_RESULTS, VTABLE_elements(interp, unsorted), NULL, cache);
     }
 
     /* Restore stuff that might have got overwriten by calls during the
      * dispatch algorithm. */
-    interp->current_cont      = saved_ccont;
-    interp->current_args      = current_args;
-    interp->current_params    = current_params;
-    interp->current_returns   = current_returns;
-    interp->args_signature    = args_signature;
-    interp->params_signature  = params_signature;
-    interp->returns_signature = returns_signature;
+    CURRENT_CONTEXT(interp) = ctx;
+    interp->current_cont = saved_ccont;
+    Parrot_pcc_set_signature(interp, ctx, saved_sig);
 
     return results;
 }
 
-
-/*
-
-=item C<PMC *get_all_candidates_with_cur_args(PARROT_INTERP, PMC *self)>
-
-Uses the arguments currently being passed to find all possible candidates that we
-could run, sorted in order of preference. This is made available for calling by
-the method dispatcher.
-
-=cut
-
-*/
-PMC *get_all_candidates_with_cur_args(PARROT_INTERP, PMC *multi) {
-    PMC *pos_args, *named_args;
-    get_args(interp, &pos_args, &named_args);
-    return find_many_candidates_with_arg_list(interp, multi, pos_args, named_args);
-}
 
 
 /*
@@ -884,6 +803,27 @@ static int check_invokable(PARROT_INTERP, PMC *value) {
     STRING * const _sub = CONST_STRING(interp, "Sub");
     STRING * const _nci = CONST_STRING(interp, "NCI");
     return VTABLE_isa(interp, value, _sub) || VTABLE_isa(interp, value, _nci);
+}
+
+/*
+
+=back
+
+=head1 EXTERNAL FUNCTIONS
+
+=item C<PMC *get_all_candidates_with_cur_args(PARROT_INTERP, PMC *self)>
+
+Uses the arguments currently being passed to find all possible candidates that
+we could run, sorted in order of preference. This is made available for calling
+by the method dispatcher.
+
+=cut
+
+*/
+
+/* not static; used in P6Invocation PMC */
+PMC *get_all_candidates_with_cur_args(PARROT_INTERP, PMC *multi) {
+    return find_many_candidates_with_arg_list(interp, multi, get_args(interp));
 }
 
 /*
@@ -942,15 +882,16 @@ Allocates the PMC's underlying storage.
 
 */
     VTABLE void init() {
-        /* Allocate the underlying struct and make candidate list an empty
-         * ResizablePMCArray. */
-        PMC * const candidates = pmc_new(interp, enum_class_ResizablePMCArray);
+        /* Allocate the underlying struct. */
         PMC_data(SELF) = mem_allocate_zeroed_typed(Parrot_Perl6MultiSub_attributes);
-        SETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
+        SETATTR_Perl6MultiSub_candidates(interp, SELF, PMCNULL);
 
         /* Need custom mark and destroy. */
         PObj_custom_mark_SET(SELF);
-        PObj_active_destroy_SET(SELF);
+        PObj_custom_destroy_SET(SELF);
+
+        /* Set scalar property to avoid. */
+        VTABLE_setprop(interp, SELF, CONST_STRING(interp, "scalar"), SELF);
     }
 
 /*
@@ -1014,23 +955,19 @@ the Perl 6 MMD algorithm.
         candidate_info **candidates = NULL;
         PMC             *unsorted;
 
-        /* Need to make sure a wobload of globals don't get destroyed. */
-        PMC      *saved_ccont       = interp->current_cont;
-        opcode_t *current_args      = interp->current_args;
-        opcode_t *current_params    = interp->current_params;
-        opcode_t *current_returns   = interp->current_returns;
-        PMC      *args_signature    = interp->args_signature;
-        PMC      *params_signature  = interp->params_signature;
-        PMC      *returns_signature = interp->returns_signature;
+        /* Need to make sure some stuff doesn't get destroyed. */
+        PMC      * ctx               = CURRENT_CONTEXT(interp);
+        PMC      * const saved_ccont = interp->current_cont;
+        PMC      * const saved_sig   = Parrot_pcc_get_signature(interp, ctx);
+        opcode_t * const current_pc  = Parrot_pcc_get_pc(interp, ctx);
 
         /* Get arguments. */
-        PMC *pos_args, *named_args;
-        get_args(interp, &pos_args, &named_args);
+        PMC *capture = get_args(interp);
 
         /* See if we have a cache entry. */
         GETATTR_Perl6MultiSub_cache_single(interp, SELF, cache);
         if (cache)
-            found = Parrot_mmd_cache_lookup_by_values(interp, cache, "", pos_args);
+            found = Parrot_mmd_cache_lookup_by_values(interp, cache, "", capture);
         if (PMC_IS_NULL(found)) {
             PMC *proto;
 
@@ -1051,22 +988,22 @@ the Perl 6 MMD algorithm.
 
             /* Now do the dispatch on the args we are being invoked with;
              * if it can't find anything, it will throw the required exception. */
-            found = do_dispatch(interp, SELF, candidates, proto, pos_args, named_args,
-                    MMD_ONE_RESULT, VTABLE_elements(interp, unsorted), (opcode_t *)next, cache);
+            found = do_dispatch(interp, SELF, candidates, proto, capture, MMD_ONE_RESULT,
+                    VTABLE_elements(interp, unsorted), (opcode_t *)next, cache);
         }
 
         /* Restore stuff that might have got overwriten by calls during the
          * dispatch algorithm. */
-        interp->current_cont      = saved_ccont;
-        interp->current_args      = current_args;
-        interp->current_params    = current_params;
-        interp->current_returns   = current_returns;
-        interp->args_signature    = args_signature;
-        interp->params_signature  = params_signature;
-        interp->returns_signature = returns_signature;
+        CURRENT_CONTEXT(interp) = ctx;
+        interp->current_cont = saved_ccont;
+        Parrot_pcc_set_signature(interp, ctx, saved_sig);
+        Parrot_pcc_set_pc(interp, ctx, current_pc);
 
-        /* Invoke the winner. */
-        return VTABLE_invoke(interp, found, next);
+        /* Invoke the winner, and mark the context so we know not to re-do a
+         * bunch of type checks. */
+        next = VTABLE_invoke(interp, found, next);
+        PObj_flag_SET(P6S_ALREADY_CHECKED, CURRENT_CONTEXT(interp));
+        return (opcode_t *)next;
     }
 
 /*
@@ -1078,8 +1015,8 @@ Takes an array of arguments and finds all possible matching candidates.
 =cut
 
 */
-    METHOD PMC *find_possible_candidates(PMC *pos_args :slurpy, PMC *named_args :named :slurpy) {
-        PMC *results = find_many_candidates_with_arg_list(interp, SELF, pos_args, named_args);
+    METHOD PMC *find_possible_candidates(PMC *capture) {
+        PMC *results = find_many_candidates_with_arg_list(interp, SELF, capture);
         RETURN(PMC *results);
     }
 
@@ -1099,7 +1036,7 @@ Marks the candidate list.
         GETATTR_Perl6MultiSub_cache_single(interp, SELF, cache_single);
         GETATTR_Perl6MultiSub_cache_many(interp, SELF, cache_many);
         if (!PMC_IS_NULL(candidates))
-            Parrot_gc_mark_PObj_alive(interp, (PObj*)candidates);
+            Parrot_gc_mark_PMC_alive(interp, candidates);
         if (cache_single)
             Parrot_mmd_cache_mark(interp, cache_single);
         if (cache_many)
@@ -1120,12 +1057,19 @@ Adds a new candidate to the candidate list.
         MMD_Cache *cache;
 
         /* Make sure it's invokable. */
-        if (!check_invokable(interp, sub))
-            Parrot_ex_throw_from_c_args(interp, NULL, EXCEPTION_INVALID_OPERATION,
-                    "Cannot add non-Sub PMC to a MultiSub.");
+        /* XXX Comment out for now, it's bogus (per jnthn++) */
+        /*
+         * if (!check_invokable(interp, sub))
+         *     Parrot_ex_throw_from_c_args(interp, NULL, EXCEPTION_INVALID_OPERATION,
+         *           "Cannot add non-Sub PMC to a MultiSub.");
+         */
 
         /* Add it to the candidates list. */
         GETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
+        if (PMC_IS_NULL(candidates)) {
+            candidates = pmc_new(interp, enum_class_ResizablePMCArray);
+            SETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
+        }
         VTABLE_push_pmc(interp, candidates, sub);
 
         /* Invalidate the sorted list - we'll need to re-build it. */
@@ -1156,7 +1100,7 @@ Gets the number of candidate on the candidate list.
     VTABLE INTVAL elements() {
         PMC *candidates;
         GETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
-        return VTABLE_elements(interp, candidates);
+        return PMC_IS_NULL(candidates) ? 0 : VTABLE_elements(interp, candidates);
     }
 
 /*
@@ -1184,9 +1128,11 @@ Gets the candidate at index C<i>.
 
 */
     VTABLE PMC * get_pmc_keyed_int(INTVAL i) {
-        PMC *candidates;
+        PMC *candidates, *found;
         GETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
-        return VTABLE_get_pmc_keyed_int(interp, candidates, i);
+        found = VTABLE_get_pmc_keyed_int(interp, candidates, i);
+        return found->vtable->base_type == enum_class_Sub ? found :
+                VTABLE_get_attr_str(interp, found, CONST_STRING(interp, "$!do"));
     }
 
 /*
@@ -1199,9 +1145,11 @@ Converts C<s> to an integer and gets the key at that index.
 
 */
     VTABLE PMC * get_pmc_keyed_str(STRING *s) {
-        PMC *candidates;
+        PMC *candidates, *found;
         GETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
-        return VTABLE_get_pmc_keyed_str(interp, candidates, s);
+        found = VTABLE_get_pmc_keyed_str(interp, candidates, s);
+        return found->vtable->base_type == enum_class_Sub ? found :
+                VTABLE_get_attr_str(interp, found, CONST_STRING(interp, "$!do"));
     }
 
 /*
@@ -1214,9 +1162,11 @@ Converts C<p> to an integer and gets the key at that index.
 
 */
     VTABLE PMC * get_pmc_keyed(PMC *p) {
-        PMC *candidates;
+        PMC *candidates, *found;
         GETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
-        return VTABLE_get_pmc_keyed(interp, candidates, p);
+        found = VTABLE_get_pmc_keyed(interp, candidates, p);
+        return found->vtable->base_type == enum_class_Sub ? found :
+                VTABLE_get_attr_str(interp, found, CONST_STRING(interp, "$!do"));
     }
 
 /*
@@ -1237,6 +1187,21 @@ Makes a copy of this Perl6MultiSub PMC.
         return copy;
     }
 
+
+/*
+
+=item METHOD PMC * clone()
+
+Makes a copy of this Perl6MultiSub PMC.
+
+=cut
+
+*/
+    METHOD PMC * clone() {
+        PMC *copy = VTABLE_clone(interp, SELF);
+        RETURN (PMC *copy);
+    }
+
 /*
 
 =item VTABLE STRING * get_string()
@@ -1253,6 +1218,23 @@ Get an iterator over the candidates.
             return VTABLE_get_string(interp, VTABLE_get_pmc_keyed_int(interp, candidates, 0));
         else
             return CONST_STRING(interp, "<anon>");
+    }
+
+/*
+
+=item VTABLE INTVAL * does(STRING *check)
+
+We pretend to do the invokable role, for the benefit of some weird bit of
+Parrot that cares.
+
+=cut
+
+*/
+    VTABLE INTVAL does(STRING *check) {
+        if (Parrot_str_equal(INTERP, check, CONST_STRING(interp, "invokable")))
+            return 1;
+        else
+            return SUPER(check);
     }
 
 /*
@@ -1284,6 +1266,31 @@ Gets a list of all candidates.
         RETURN (PMC *candidates);
     }
 
+/*
+
+=item METHOD PMC * set_candidates()
+
+Sets the candidate list for this multi, replacing any previous candidate list
+that we may have in place. Returns SELF.
+
+=cut
+
+*/
+    METHOD PMC *set_candidates(PMC *candidates :slurpy) {
+        /* If we already have candidates, add these, otherwise just use them. */
+        PMC *existing;
+        GETATTR_Perl6MultiSub_candidates(interp, SELF, existing);
+        if (PMC_IS_NULL(existing)) {
+            SETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
+        }
+        else {
+            /* If we already have candidates, add these. */
+            PMC *iter = VTABLE_get_iter(interp, candidates);
+            while (VTABLE_get_bool(interp, iter))
+                VTABLE_push_pmc(interp, SELF, VTABLE_shift_pmc(interp, iter));
+        }
+        RETURN (PMC *SELF);
+    }
 }
 
 /*

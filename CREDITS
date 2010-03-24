@@ -16,8 +16,6 @@
         PPS: This file is encoded in UTF-8
 
 ----------
-N: Ahmed Zawawi
-D: Rakudo builtins
 
 N: Alberto Manuel Brandao Simoes
 U: ambs
@@ -25,10 +23,19 @@ E: ambs@cpan.org
 S: Braga, Portugal
 W: http://alfarrabio.di.uminho.pt/~albie/
 
+N: Alex Elsayed
+U: eternaleye
+E: eternaleye@gmail.com
+
 N: Allison Randal
 D: Parrot Architect (0.4.6...)
 E: allison@parrot.org
 U: allison
+
+N: Ahmad M. Zawawi
+U: azawawi
+E: ahmad.zawawi@gmail.com
+D: Rakudo builtins, win32 patches
 
 N: Andrew Whitworth
 E: wknight8111@gmail.com
@@ -323,9 +330,5 @@ E: will@coleda.com
 N: Zach Morgan
 E: zpmorgan@gmail.com
 D: Rakudo patch
-
-N: Alex Elsayed
-U: eternaleye
-E: eternaleye@gmail.com
 
 =cut

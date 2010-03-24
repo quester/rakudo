@@ -19,49 +19,62 @@ part of monthly Parrot releases.
   2009-06-18   Rakudo #18 "Pittsburgh"         (pmichaud)
   2009-07-23   Rakudo #19 "Chicago"            (moritz)
   2009-08-20   Rakudo #20 "PDX"                (kyle)
+  2009-09-17   Rakudo #21 "Seattle"            (particle)
+  2009-10-22   Rakudo #22 "Thousand Oaks"      (duff)
+  2009-11-19   Rakudo #23 "Lisbon"             (masak)
+  2009-12-17   Rakudo #24 "Seoul"              (chromatic)
+  2010-01-22   Rakudo #25 "Minneapolis"        (pmichaud)
+  2010-02-18   Rakudo #26 "Amsterdam"          (mberends)
 
-=head2 Planned 2009 releases
+=head2 Planned 2010 releases
 
 Dates are based on Parrot's expected release schedule.
 
-  2009-09-17   Rakudo #21 "Seattle"            (particle)
-  2009-10-22   Rakudo #22                      (duff)
-  2009-11-19   Rakudo #23                      (masak)
-  2009-12-17   Rakudo #24                      (chromatic)
-  2010-01-21   Rakudo #25                      (smash)
-  2010-02-18   Rakudo #26                      (Su-Shee)
+  2010-03-18   Rakudo #27 "Copenhagen"         (smash)
+  2010-04-22   Rakudo #28                      (pmichaud?)
+  2010-05-20   Rakudo #29                      (open)
+  2010-06-17   Rakudo #30                      (open)
+  2010-07-22   Rakudo #31                      (open)
+  2010-08-19   Rakudo #32                      (open)
+  2010-09-23   Rakudo #33                      (open)
+  2010-10-21   Rakudo #34                      (open)
+  2010-11-18   Rakudo #35                      (open)
+  2010-12-23   Rakudo #36                      (open)
 
 =head2 Suggested .pm group names for future releases
 
-  Atlanta.pm
+  Atlanta.pm (* check with Pm before using this one)
   BristolBath.pm
   Milan.pm
-  Seoul.pm
+
+More names can be gotten from L<http://www.pm.org> if you 
+can't think of one with any particular significance to Perl 
+6 or Rakudo
 
 =head2 Steps to create a release (for release managers)
 
 Each Rakudo development release is timed to occur two
-days after a Parrot monthly release.  
+days after a Parrot monthly release.
 
 =over 4
 
 =item 1.
 
-A few days before
-the Parrot release, it's a good idea to:
+A few days before the Parrot release, it's a good idea to:
 
 =over 4
 
 =item *
 
 Remind people of the upcoming release, invite people to
-update the ChangeLog file, update the ROADMAP, choose a 
+update the ChangeLog file, update the ROADMAP, choose a
 release name, etc.
 
 =item *
 
 Verify that the Parrot trunk head is able to build Rakudo
-and run the spectest suite.
+and run the spectest suite. Also check the smolder reports
+at L<http://tinyurl.com/rakudosmoke>.
 
 =item *
 
@@ -83,12 +96,12 @@ the release announcement).
 
 =item 2.
 
-Once Parrot issues its monthly release, edit Rakudo's 
-build/PARROT_REVISION file to contain the subversion revision 
-number and release number corresponding to Parrot's monthly 
+Once Parrot issues its monthly release, edit Rakudo's
+build/PARROT_REVISION file to contain the subversion revision
+number and release number corresponding to Parrot's monthly
 release.  For example, for June 2009 PARROT_REVISION file
-contained "39599 1.3.0".  As always, test to make sure Rakudo 
-still builds and passes its tests.  Once build/PARROT_REVISION 
+contained "39599 1.3.0".  As always, test to make sure Rakudo
+still builds and passes its tests.  Once build/PARROT_REVISION
 has been set to the Parrot release, it must not be changed until
 after the Rakudo release.  In other words, we want each
 monthly release of Rakudo to be able to be built using
@@ -96,8 +109,8 @@ the immediately prior release of Parrot.
 
 =item 3.
 
-The short period following the Parrot release until the 
-Rakudo release is generally intended for fixing bugs, 
+The short period following the Parrot release until the
+Rakudo release is generally intended for fixing bugs,
 updating documentation, and so on.
 
 =item 4.
@@ -111,7 +124,7 @@ This can be conveniently done with  "git log --since=yyyy-mm-dd --reverse".
 =item 5.
 
 When it's time to cut the release, create a new release announcement
-in docs/announce/YYYY-MM.  It's often a good idea to use the
+in docs/announce/YYYY.MM.  It's often a good idea to use the
 previous month's file as a starting point for this.  Highlight areas
 in which the new release is significant.  If possible, also give
 some small details about the choice of release name.  (If the
@@ -124,23 +137,23 @@ the number of available tests, look at "docs/spectest-progress.csv".
 If it hasn't been updated recently, use "git log docs/spectest-progress.csv"
 to find out who has been updating it and seek out this person for an
 update. You can also run F<tools/test_summary.pl> to obtain the latest data.
-To get the total number of available spectes, the tool C<ack> (see
+To get the total number of available spectests, the tool C<ack> (see
 L<http://search.cpan.org/dist/ack/>) has to be installed and be found in
 C<$PATH>.
 
 As of this writing, there's not a publicly available tool to
 update spectest-progress.csv or to count tests that won't run.
 
-  $ git add docs/announce/YYYY-MM
+  $ git add docs/announce/YYYY.MM
   $ git commit docs
 
 =item 6.
 
 Update the release dates and names at the top of this file
-(F<docs/release-guide.pod>).  Also improve these instructions if
+(F<docs/release_guide.pod>).  Also improve these instructions if
 you find any steps that are missing.
 
-  $ git commit docs/release-guide.pod
+  $ git commit docs/release_guide.pod
 
 =item 7.
 
@@ -153,9 +166,9 @@ Make sure everything compiles and runs from a known clean state:
   $ make spectest
 
 Continue adjusting things until make spectest passes as expected.
-Often this means fixing a bug, fudging a test, or removing a
-test from t/spectest.data .  Use your best judgement or ask others
-if uncertain what to do here.
+Often this means fixing a bug, fudging a test, or (temporarily?)
+commenting out a test file in t/spectest.data .  Use your best 
+judgment or ask others if uncertain what to do here.
 
 =item 8.
 
@@ -166,9 +179,9 @@ Make sure any locally modified files have been pushed back to github.
 
 =item 9.
 
-Create an initial tarball by entering C<make release VERSION=YYYY-MM>,
-where YYYY-MM is the month for which the release is being made.
-This will create a candidate tarball file named <rakudo-YYYY-MM.tgz>.
+Create an initial tarball by entering C<make release VERSION=YYYY.MM>,
+where YYYY.MM is the month for which the release is being made.
+This will create a candidate tarball file named <rakudo-YYYY.MM.tgz>.
 
 =item 10.
 
@@ -178,16 +191,16 @@ fix them and go back to step 7.
 
 =item 11.
 
-Tag the release by its release month ("MMMM-YY") and its code name.
+Tag the release by its release month ("MMMM.YY") and its code name.
 
-  $ git tag -a -m"tag release #nn" MMMM-YY    # e.g., 2009-04
+  $ git tag -a -m"tag release #nn" MMMM.YY    # e.g., 2010.02
   $ git tag -a -m"tag release #nn" CODENAME   # e.g., "Bratislava"
   $ git push --tags
 
 =item 12.
 
 Upload the release tarball to github's download area at
-L<http://github.com/rakudo/rakudo/downloads>.  
+L<http://github.com/rakudo/rakudo/downloads>.
 
 =item 13.
 

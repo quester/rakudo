@@ -2,14 +2,22 @@
 
 This is Rakudo Perl, a Perl 6 compiler for the Parrot virtual machine.
 
-Rakudo Perl is Copyright (C) 2008-2009, The Perl Foundation.
+Rakudo Perl is Copyright (C) 2008-2010, The Perl Foundation.
 Rakudo Perl is distributed under the terms of the Artistic License 2.0.
 For more details, see the full text of the license in the file LICENSE.
 
 =head2 Installing with your package manager
 
 Rakudo is currently available for Arch Linux users in the AUR at
-(L<http://aur.archlinux.org/packages.php?ID=29068>)
+(L<http://aur.archlinux.org/packages.php?ID=29068>).
+
+FreeBSD users may find the Rakudo port at
+L<http://rakudoport.sourceforge.net/> useful.
+
+Windows users can download binary builds from
+L<http://sourceforge.net/projects/parrotwin32/files/> and need the
+I<parrotwin32 setup> and the matching version of
+I<parrot-rakudo addon>.
 
 =head2 Build requirements (Installing from source)
 
@@ -67,7 +75,7 @@ of Rakudo you're working with.
 You can use C<--parrot-config=/path/to/parrot_config> instead
 of C<--gen-parrot> to use an already installed Parrot for building
 Rakudo.  This installed Parrot must include its development
-environment; typically this is done via Parrot's C<make install-dev>
+environment; typically this is done via Parrot's C<make install>
 target or by installing prebuilt C<parrot-devel> and/or C<libparrot-dev>
 packages.  The version of the already installed Parrot must satisfy a
 minimum specified by the Rakudo being built -- Configure.pl will
@@ -80,9 +88,9 @@ Once built, Rakudo's C<make install> target will install Rakudo
 and its libraries into the Parrot installation that was used to
 create it.  Until this step is performed, the "perl6" executable
 created by C<make> above can only be reliably run from the root of
-Rakudo's build directory.  After C<make install> is performed
-the executable can be run from any directory (as long as the
-Parrot installation that was used to create it remains intact).
+Rakudo's build directory.  After C<make install> is performed,
+the installed executable can be run from any directory (as long as
+the Parrot installation that was used to create it remains intact).
 
 If the Rakudo compiler is invoked without an explicit script to
 run, it enters a small interactive mode that allows Perl 6 statements
@@ -100,6 +108,12 @@ it's capable of running a simple test harness.
 Running C<make spectest> will import the official Perl 6 test suite
 from the Pugs repository L<http://svn.pugscode.org/pugs/t/spec/>
 and run all of these tests that are currently known to pass.
+
+If you want to automatically submit the results of your spectest run
+to a central server, use C<make spectest_smolder> instead. You need
+the Perl 5 module L<TAP::Harness::Archive> and an active internet
+connection for that. The smoke results are collected at
+L<http://smolder.plusthree.com/app/public_projects/details/18>.
 
 At present we do not have any plans to directly store the
 official test suite as part of the Rakudo/Parrot repository,
