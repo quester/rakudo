@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Num {
     our Str multi method Str() {
         ~self

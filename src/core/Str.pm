@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Str {
     multi method Bool { ?(pir::istrue__IP(self)); }
 

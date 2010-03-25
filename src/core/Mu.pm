@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Mu {
     method Bool { $.defined }
 

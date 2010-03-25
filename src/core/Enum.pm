@@ -1,3 +1,5 @@
+use MONKEY_TYPING;
+class EnumMap { ... }
 augment class Enum {
 
 =begin item ACCEPTS()

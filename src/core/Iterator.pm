@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Iterator {
     multi method elems() {
         my $elems = 0;

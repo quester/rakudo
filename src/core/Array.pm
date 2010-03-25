@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Array {
     method perl() {
         # XXX: $_.perl and .perl don't work, but this does...

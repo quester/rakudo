@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Any {
     multi method abs() {
         pir::abs__Nn(self.Num);

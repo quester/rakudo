@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 class Rat {
     has $.numerator;
     has $.denominator;

@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 role Hash is EnumMap {
     method postcircumfix:<{ }>($key) {
         Q:PIR {

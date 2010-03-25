@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 class Complex { ... }
 
 augment class Num {

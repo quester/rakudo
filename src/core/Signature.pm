@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Signature {
     method perl() {
         my @parts = gather {

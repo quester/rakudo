@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Junction {
     # XXX When ~ starts calling Stringy, probably this
     # method needs to be renamed.

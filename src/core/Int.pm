@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 # XXX Should be my...
 our sub upgrade_to_num_if_needed($test) {
     Q:PIR {

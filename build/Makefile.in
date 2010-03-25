@@ -171,7 +171,6 @@ CORE_SOURCES = \
   src/core/Any-list.pm \
   src/core/Any-num.pm \
   src/core/Any-str.pm \
-  src/core/Seq.pm \
   src/core/Set.pm \
   src/core/Array.pm \
   src/core/Int.pm \
@@ -187,9 +186,7 @@ CORE_SOURCES = \
   src/core/RangeIter.pm \
   src/core/metaops.pm \
   src/core/EnumMap.pm \
-  src/core/Hash.pm \
   src/core/Enum.pm \
-  src/core/IO.pm \
   src/core/IO/Socket.pm \
   src/core/IO/Socket/INET.pm \
   src/core/Parameter.pm \
@@ -204,39 +201,16 @@ CORE_SOURCES = \
   src/cheats/setup-io.pm \
   src/glue/subset.pm \
 
-# SETTING = \
-#   src/setting/traits.pm \
-#   src/setting/Any-list.pm \
-#   src/setting/Any-num.pm \
-#   src/setting/Any-str.pm \
-#   src/setting/Array.pm \
-#   src/setting/Attribute.pm \
-#   src/setting/Block.pm \
-#   src/setting/Bool.pm \
-#   src/setting/Buf.pm \
-#   src/setting/Code.pm \
-#   src/setting/Complex.pm \
-#   src/setting/Hash.pm \
-#   src/setting/Rat.pm \
-#   src/setting/Int.pm \
-#   src/setting/IO.pm \
-#   src/setting/IO/Socket.pm \
-#   src/setting/IO/Socket/INET.pm \
-#   src/setting/Junction.pm \
-#   src/setting/List.pm \
-#   src/setting/Mapping.pm \
-#   src/setting/Match.pm \
-#   src/setting/Num.pm \
-#   src/setting/NYI.pm \
-#   src/setting/Object.pm \
-#   src/setting/Operators.pm \
-#   src/setting/Pair.pm \
-#   src/setting/Parameter.pm \
-#   src/setting/Range.pm \
-#   src/setting/Signature.pm \
-#   src/setting/Str.pm \
-#   src/setting/Temporal.pm \
-#   src/setting/Whatever.pm \
+#  src/core/Seq.pm \
+#  src/core/Hash.pm \
+#  src/core/IO.pm \
+
+.SUFFIXES: .pm .pir
+CORE_SOURCES_PIR = $(CORE_SOURCES:.pm=.pir)
+# The above line has a 'substitution reference' to a variable, hopefully
+# all the various make utilities perform it.
+.pm.pir:
+	$(PARROT) $(PARROT_ARGS) $(S1_PERL6_PBC) --target=pir --output=$@ $<
 
 PMC_SOURCES = \
   $(PMC_DIR)/perl6str.pmc $(PMC_DIR)/objectref.pmc \
@@ -305,9 +279,9 @@ $(PERL6_EXE): $(PERL6_PBC)
 	$(PBC_TO_EXE) $(PERL6_PBC)
 
 # the complete compiler, including core/setting
-$(PERL6_PBC): $(S1_PERL6_PBC) src/gen/core.pm
-	$(PARROT) $(PARROT_ARGS) $(S1_PERL6_PBC) --target=pir \
-	    src/gen/core.pm > $(CORE_PIR)
+$(PERL6_PBC): $(S1_PERL6_PBC) src/gen/core.pir
+	#$(PARROT) $(PARROT_ARGS) $(S1_PERL6_PBC) --target=pir \
+	#    src/gen/core.pm > $(CORE_PIR)
 	$(PARROT) $(PARROT_ARGS) -o $(PERL6_PBC) src/Perl6/Compiler.pir
 
 # the stage-1 compiler
@@ -315,6 +289,13 @@ $(S1_PERL6_PBC): $(PARROT) $(SOURCES)
 	$(PERL) -e "" > $(CORE_PIR)
 	@win32_libparrot_copy@
 	$(PARROT) $(PARROT_ARGS) -o $(S1_PERL6_PBC) src/Perl6/Compiler.pir
+
+# There is some sneaky logic in the above two targets.  The S1_PERL6_PBC
+# target (stage 1 compiler) updates not only $(S1_PERL6_PBC), it also
+# creates a new but empty src/gen/core.pir!
+
+# The PERL6_PBC target used to depend src/gen/core.pm, but that has been
+# changed to src/gen/core.pir
 
 $(PERL6_G): $(NQP_EXE) src/Perl6/Grammar.pm
 	$(NQP_EXE) --target=pir --output=$(PERL6_G) --encoding=utf8 \
@@ -381,10 +362,8 @@ src/gen/cheats.pir: build/gen_cheats_pir.pl $(CHEATS_PIR)
 #src/gen/core.pm: build/gen_core_pm.pl $(CORE_SOURCES)
 #	$(PERL) build/gen_core_pm.pl $(CORE_SOURCES) > src/gen/core.pm
 
-src/gen/core.pir: $(CORE_PIR)
-
-.pm.pir:
-	cat $(CORE_PIR)
+src/gen/core.pir: $(CORE_SOURCES_PIR)
+	cat $(CORE_SOURCES_PIR) > src/gen/core.pir
 
 src/gen/uprop-cheats.pir: build/gen_uprop_pir.pl
 	$(PERL) build/gen_uprop_pir.pl > src/gen/uprop-cheats.pir
@@ -408,7 +387,7 @@ $(PMC_DIR)/objectref.pmc : $(PMC_DIR)/objectref_pmc.template build/gen_objectref
 
 ##  testing targets
 Test.pir: Test.pm perl6.pbc
-	$(PARROT) $(PARROT_ARGS) perl6.pbc --target=pir --output=Test.pir Test.pm
+#	$(PARROT) $(PARROT_ARGS) perl6.pbc --target=pir --output=Test.pir Test.pm
 
 test    : coretest
 

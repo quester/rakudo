@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Block {
 
 =begin item arity

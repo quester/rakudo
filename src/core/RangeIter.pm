@@ -1,4 +1,5 @@
-
+use MONKEY_TYPING;
+class Range { ... }
 multi sub RangeIterCmp($a, $b) {
     $a cmp $b;
 }

@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Any {
     method ACCEPTS($topic) {
         self === $topic

@@ -1,3 +1,23 @@
+=head1 This is the split-gen-setting-2 experimental branch!
+
+It is probably non working.  If it seems to work, this notice will
+change. 
+
+The purpose of the branch is to compile the Rakudo core libraries
+(formerly known as the setting) to PIR separately rather than together.
+Moritz++ tried this before with code from the Rakudo alpha branch, and
+came up against the problem that some classes (Rat and IO) are defined
+only in Perl 6, and therefore cannot be referenced by code in other
+classes.
+
+See: http://www.mail-archive.com/perl6-compiler@perl.org/msg04770.html
+
+The ng branch may have solved this with a stub class, eg:
+
+    class Rat { ... };
+
+See: http://www.mail-archive.com/perl6-compiler@perl.org/msg04776.html
+
 =head1 Rakudo Perl 6
 
 This is Rakudo Perl, a Perl 6 compiler for the Parrot virtual machine.

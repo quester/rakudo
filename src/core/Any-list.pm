@@ -1,3 +1,5 @@
+use MONKEY_TYPING;
+class Whatever { ... }
 augment class Any {
 
     our Str multi method join($separator = '') {

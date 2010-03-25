@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Iterable {
     multi method Int() {
         $.elems.Int;

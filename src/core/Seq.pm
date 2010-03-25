@@ -1,3 +1,4 @@
+use MONKEY_TYPING;
 augment class Seq {
     multi method ACCEPTS(@topic) {
         my $self_it = self.iterator();
