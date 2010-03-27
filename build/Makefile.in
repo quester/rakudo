@@ -21,11 +21,12 @@ LIBPARROT     = @inst_libparrot_ldflags@
 O             = @o@
 LOAD_EXT      = @load_ext@
 PERL          = @perl@
+CAT           = @cat@
+CHMOD         = @chmod@
 CP            = @cp@
 MV            = @mv@
 RM_F          = @rm_f@
-MKPATH        = $(PERL) -MExtUtils::Command -e mkpath
-CHMOD         = $(PERL) -MExtUtils::Command -e chmod
+MKPATH        = @mkpath@
 
 # locations of parrot resources
 PARROT           = $(PARROT_BIN_DIR)/parrot$(EXE)
@@ -230,6 +231,7 @@ CLEANUPS = \
   perl6$(O) \
   Test.pir \
   $(DYNEXT_DIR)/*$(LOAD_EXT) \
+  $(CORE_SOURCES_PIR) \
   src/gen/core.pm \
   src/gen/*.pir \
   src/gen/*.pbc \
@@ -280,6 +282,7 @@ $(PERL6_EXE): $(PERL6_PBC)
 
 # the complete compiler, including core/setting
 $(PERL6_PBC): $(S1_PERL6_PBC) src/gen/core.pir
+	$(CAT) $(CORE_SOURCES_PIR) > src/gen/core.pir
 	#$(PARROT) $(PARROT_ARGS) $(S1_PERL6_PBC) --target=pir \
 	#    src/gen/core.pm > $(CORE_PIR)
 	$(PARROT) $(PARROT_ARGS) -o $(PERL6_PBC) src/Perl6/Compiler.pir

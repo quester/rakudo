@@ -38,7 +38,7 @@ MAIN: {
         system @command;
     }
 
-    # Get a list of parrot-configs to invoke.
+    # Get a list of possible parrot-configs to try to invoke.
     my @parrot_config_exe = qw(
         parrot_install/bin/parrot_config
         ../../parrot_config
@@ -158,49 +158,11 @@ END
     }
 }
 
-sub frob_setting {
-    my $t = shift;
-    my @setting_files = split /\n/, $t;
-    # ignore the first and last line, they are just the markers
-    shift @setting_files; pop @setting_files;
-
-    for (@setting_files) { s/^#\s*// };
-    my $result = "SETTING = \\\n  "
-                 . join(" \\\n  ", @setting_files)
-                 . "\n\n";
-    my @gen_setting_files = map {
-            my $a = $_;
-            $a =~ s/\.pm$/.pir/;
-            $a =~ s/(.*)setting/$1gen_setting/;
-            $a
-        } @setting_files;
-
-    push @setting_files,     'src/gen_setting/exports.pm';
-    push @gen_setting_files, 'src/gen_setting/exports.pir';
-
-    $result .= "GEN_SETTING = \\\n  "
-               . join(" \\\n  ", @gen_setting_files)
-               . "\n";
-
-
-    # rules for compiling the setting files
-    for my $i (0..$#setting_files) {
-        $result .= "$gen_setting_files[$i]: perl6_s1.pbc $setting_files[$i]\n"
-                   . "\t\$(PARROT) \$(PARROT_ARGS) perl6_s1.pbc --target=pir "
-                   . "$setting_files[$i] > $gen_setting_files[$i]\n\n";
-    }
-
-    return $result;
-}
-
-#  Generate  Makefile from a configuration
+#  Generate a Makefile from a configuration
 sub create_makefile {
     my %config = @_;
 
     my $maketext = slurp( 'build/Makefile.in' );
-
-
-    $maketext =~ s{^(\#\s*START_SETTING_MAGIC.*?#\s*END_SETTING_MAGIC)$}{frob_setting("$1")}ems;
 
     $config{'win32_libparrot_copy'} = $^O eq 'MSWin32' ? 'copy $(PARROT_BIN_DIR)\libparrot.dll .' : '';
     $maketext =~ s/@(\w+)@/$config{$1}/g;
@@ -244,6 +206,8 @@ Configure.pl - Rakudo Configure
 General Options:
     --help             Show this text
     --gen-parrot       Download and build a copy of Parrot to use
+    --gen-parrot-prefix=/path/to/parrot_install
+                       Directory for the the installed parrot
     --gen-parrot-option='--option=value'
                        Set parrot config option when using --gen-parrot
     --parrot-config=(config)
