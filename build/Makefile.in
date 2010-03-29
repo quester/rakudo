@@ -194,23 +194,23 @@ CORE_SOURCES = \
   src/core/Signature.pm \
   src/core/Block.pm \
   src/core/Regex.pm \
+  src/core/Hash.pm \
   src/core/Junction.pm \
   src/core/Grammar.pm \
+  src/core/Seq.pm \
+  src/core/IO.pm \
   src/core/Substitution.pm \
   src/core/system.pm \
   src/cheats/match-bool.pm \
   src/cheats/setup-io.pm \
   src/glue/subset.pm \
 
-#  src/core/Seq.pm \
-#  src/core/Hash.pm \
-#  src/core/IO.pm \
 
 .SUFFIXES: .pm .pir
 CORE_SOURCES_PIR = $(CORE_SOURCES:.pm=.pir)
 # The above line has a 'substitution reference' to a variable, hopefully
 # all the various make utilities perform it.
-.pm.pir:
+.pm.pir: $(S1_PERL6_PBC)
 	$(PARROT) $(PARROT_ARGS) $(S1_PERL6_PBC) --target=pir --output=$@ $<
 
 PMC_SOURCES = \

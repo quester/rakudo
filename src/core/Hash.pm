@@ -32,10 +32,10 @@ role Hash is EnumMap {
             }
             else {
                 given $cur {
-                    when Enum {
+                    when ::Enum {
                         self{$cur.key} = $cur.value;
                     }
-                    when EnumMap {
+                    when ::EnumMap {
                         for $cur.iterator -> $pair {
                             self{$pair.key} = $pair.value;
                         }

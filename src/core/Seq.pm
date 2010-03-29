@@ -5,14 +5,14 @@ augment class Seq {
         my $topic_it = @topic.iterator();
         loop {
             my $cur_self_elem = $self_it.get;
-            if $cur_self_elem ~~ EMPTY { last }
-            if $cur_self_elem ~~ Whatever {
+            if $cur_self_elem ~~ ::EMPTY { last }
+            if $cur_self_elem ~~ ::Whatever {
                 # If we just have * left, we're done. Otherwise, we have a
                 # "target" to look for.
                 loop {
                     $cur_self_elem = $self_it.get;
-                    if $cur_self_elem ~~ EMPTY { return True }
-                    unless $cur_self_elem ~~ Whatever {
+                    if $cur_self_elem ~~ ::EMPTY { return True }
+                    unless $cur_self_elem ~~ ::Whatever {
                         last;
                     }
                 }

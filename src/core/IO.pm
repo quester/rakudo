@@ -25,7 +25,7 @@ class IO {
     }
 
     multi method lines($limit = *) {
-        my $l = $limit ~~ Whatever ?? Inf !! $limit;
+        my $l = $limit ~~ ::Whatever ?? Inf !! $limit;
         gather while !$.eof && $l-- > 0 {
            my $line = $.get;
            if $line.defined {
