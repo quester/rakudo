@@ -335,6 +335,39 @@ Completes the creation of the metaclass and return a proto-object.
 .end
 
 
+=item rebless
+
+Used to rebless the current class into some subclass of itself.
+
+=cut
+
+.sub 'rebless' :method
+    .param pmc target
+    .param pmc new_class
+
+    # Get and rebless into the underlying Parrot class.
+    .local pmc new_how
+    new_how = new_class.'HOW'()
+    $P0 = new_how.'get_parrotclass'(new_class)
+    rebless_subclass target, $P0
+
+    # Also need to do initialization of the containers for any attributes.
+    .local pmc example, attrs, it, cur_attr, tmp
+    example = new_class.'CREATE'()
+    attrs = getattribute new_how, '$!attributes'
+    it = iter attrs
+  it_loop:
+    unless it goto it_loop_end
+    cur_attr = shift it
+    $S0 = cur_attr.'name'()
+    tmp = getattribute example, $S0
+    setattribute target, $S0, tmp
+    goto it_loop
+  it_loop_end:
+
+    .return (target)
+.end
+
 =item ver(object)
 
 =cut
@@ -540,7 +573,6 @@ Gets a list of methods.
 .sub 'methods' :method
     .param pmc obj
     .param pmc adverbs :named :slurpy
-
     .local pmc local, tree, private
     local = adverbs['local']
     tree = adverbs['tree']
@@ -568,6 +600,8 @@ Gets a list of methods.
     if $S1 == '!' goto it_loop
   private_done:
     cur_meth = method_hash[$S0]
+    cur_meth = new ['ObjectRef'], cur_meth
+    setprop cur_meth, 'scalar', cur_meth
     result_list.'push'(cur_meth)
     goto it_loop
   it_loop_end:
@@ -583,7 +617,7 @@ Gets a list of methods.
     # we are wanting a hierarchical list then we push the resulting Array
     # straight on, so it won't flatten. Otherwise we do .list so what we
     # push will flatten.
-    .local pmc parents, cur_parent, parent_methods
+    .local pmc parents, cur_parent, cur_parent_meta, parent_methods
     parents = inspect parrot_class, 'parents'
     it = iter parents
   parent_it_loop:
@@ -593,10 +627,11 @@ Gets a list of methods.
     if $I0 goto parent_it_loop
     cur_parent = getprop 'metaclass', cur_parent
     cur_parent = cur_parent.'WHAT'()
-    parent_methods = self.'methods'(cur_parent, adverbs :flat :named)
+    cur_parent_meta = cur_parent.'HOW'()
+    parent_methods = cur_parent_meta.'methods'(cur_parent, adverbs :flat :named)
     if null tree goto not_tree
     unless tree goto not_tree
-    parent_methods = new 'Perl6Scalar', parent_methods
+    setprop parent_methods, 'scalar', parent_methods
   not_tree:
     result_list.'push'(parent_methods)
     goto parent_it_loop
