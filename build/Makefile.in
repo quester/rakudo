@@ -157,6 +157,7 @@ CHEATS_PIR = \
   src/cheats/parrot/Protoobject.pir \
   src/cheats/parrot/P6role.pir \
   src/gen/uprop-cheats.pir \
+  src/gen/version-cheats.pir \
   src/cheats/parrot/register.pir \
 
 CORE_SOURCES = \
@@ -390,6 +391,9 @@ src/gen/core.pm: build/gen_core_pm.pl $(CORE_SOURCES)
 
 src/gen/uprop-cheats.pir: build/gen_uprop_pir.pl
 	$(PERL) build/gen_uprop_pir.pl > src/gen/uprop-cheats.pir
+
+src/gen/version-cheats.pir: build/gen_version_pir.pl
+	$(PERL) build/gen_version_pir.pl > src/gen/version-cheats.pir
 
 #src/gen_metaop.pir: build/gen_metaop_pir.pl
 #	$(PERL) build/gen_metaop_pir.pl > src/gen_metaop.pir

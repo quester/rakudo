@@ -164,6 +164,15 @@ you find any steps that are missing.
 
 =item 7.
 
+Also, update the settings of $release and $copyright_year near
+the top of build/gen_version_pir.pl.  This sets the beginning
+of the output of perl6 -v or perl6 --version.  If this is a
+monthly or final release, make sure $release says so.
+
+  $ git commit build/gen_version_pir.pl
+
+=item 8.
+
 Make sure everything compiles and runs from a known clean state:
 
   $ make realclean
@@ -177,26 +186,26 @@ Often this means fixing a bug, fudging a test, or (temporarily?)
 commenting out a test file in t/spectest.data .  Use your best 
 judgment or ask others if uncertain what to do here.
 
-=item 8.
+=item 9.
 
 Make sure any locally modified files have been pushed back to github.
 
   $ git status
   $ git push
 
-=item 9.
+=item 10.
 
 Create an initial tarball by entering C<make release VERSION=YYYY.MM>,
 where YYYY.MM is the month for which the release is being made.
 This will create a candidate tarball file named <rakudo-YYYY.MM.tgz>.
 
-=item 10.
+=item 11.
 
 Unpack the tar file into another area, and test that it
 builds and runs properly.  If there are any problems,
 fix them and go back to step 7.
 
-=item 11.
+=item 12.
 
 Tag the release by its release month ("MMMM.YY") and its code name.
 
@@ -204,26 +213,41 @@ Tag the release by its release month ("MMMM.YY") and its code name.
   $ git tag -a -m"tag release #nn" CODENAME   # e.g., "Bratislava"
   $ git push --tags
 
-=item 12.
+=item 13.
 
 Upload the release tarball to github's download area at
 L<http://github.com/rakudo/rakudo/downloads>.
 
-=item 13.
+=item 14.
+
+Update the setting of $release again, near the top of
+build/gen_version_pir.pl.  Have it state that this a
+development version, based on [the name and date of the
+release you just pushed], evolving towards [the name and
+target date of the next release.]
+
+  $ git commit build/gen_version_pir.pl
+
+Push this back to github.
+
+  $ git status
+  $ git push
+
+=item 15.
 
 Publish the release announcement (from #5) above to appropriate
 locations, including rakudo.org, use.perl, perl6-language,
 perl6-announce, perl6-users, and others.
 
-=item 14.
+=item 16.
 
 Update the Wikipedia entry at L<http://en.wikipedia.org/wiki/Rakudo>.
 
-=item 15.
+=item 17.
 
 Promote the release anywhere else you think appropriate.
 
-=item 16.
+=item 18.
 
 You're done!  Celebrate with the appropriate amount of fun.
 
