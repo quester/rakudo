@@ -497,7 +497,11 @@ method statement_prefix:sym<BEGIN>($/) {
     our %BEGINDONE;
     our $?RAKUDO_HLL;
     my $past := $<blorst>.ast;
-    $past.hll($?RAKUDO_HLL);
+    $past.blocktype('declaration');
+    $past := PAST::Block.new(
+        :hll($?RAKUDO_HLL),
+        PAST::Op.new( :pasttype('call'), :name('!YOU_ARE_HERE'), $past )
+    );
     my $compiled := PAST::Compiler.compile($past);
     my $begin_id := $past.unique('BEGINDONE_');
     %BEGINDONE{$begin_id} := $compiled();
@@ -616,7 +620,7 @@ method module_name($/) {
     my $var := PAST::Var.new(
         :name(@name.pop),
         :namespace(@name),
-        :scope('package')
+        :scope(is_lexical(~$<longname>) ?? 'lexical' !! 'package')
     );
     if $<arglist> {
         my $past := $<arglist>[0].ast;
@@ -1344,13 +1348,44 @@ method regex_def($/, $key?) {
 }
 
 method type_declarator:sym<enum>($/) {
-    my $values := $<circumfix>.ast;
-
-    make PAST::Op.new(
+    my $value_ast := PAST::Op.new(
         :pasttype('call'),
         :name('!create_anon_enum'),
-        $values
+        $<circumfix>.ast
     );
+    if $<name> {
+        # Named; need to compile and run the AST right away.
+        our $?RAKUDO_HLL;
+        my $compiled := PAST::Compiler.compile(PAST::Block.new(
+            :hll($?RAKUDO_HLL), $value_ast
+        ));
+        my $result := (pir::find_sub_not_null__ps('!YOU_ARE_HERE'))($compiled);
+        
+        # Only support our-scoped so far.
+        unless $*SCOPE eq '' || $*SCOPE eq 'our' {
+            $/.CURSOR.panic("Do not yet support $*SCOPE scoped enums");
+        }
+        
+        # Install names.
+        $/.CURSOR.add_name(~$<name>[0]);
+        for $result {
+            $/.CURSOR.add_name(~$_.key);
+        }
+        
+        # Emit code to set up named enum.
+        @PACKAGE[0].block.loadinit.push(PAST::Op.new(
+            :pasttype('call'),
+            :name('!setup_named_enum'),
+            ~$<name>[0],
+            $value_ast
+        ));
+        my @name := Perl6::Grammar::parse_name(~$<name>[0]);
+        make PAST::Var.new( :name(@name.pop), :namespace(@name), :scope('package') );
+    }
+    else {
+        # Anonymous, so we're done.
+        make $value_ast;
+    }
 }
 
 method type_declarator:sym<subset>($/) {
@@ -1591,7 +1626,7 @@ method trait_mod:sym<is>($/) {
         # the parameter.
         my @name := Perl6::Grammar::parse_name(~$<longname>);
         $trait.unshift(PAST::Var.new(
-            :scope('package'),
+            :scope(is_lexical(~$<longname>) ?? 'lexical' !! 'package'),
             :name(@name.pop()),
             :namespace(@name)
         ));

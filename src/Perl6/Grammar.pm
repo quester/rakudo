@@ -108,6 +108,11 @@ method is_name($name) {
             return 1;
         }
     }
+    
+    # Is it a package we're compiling?
+    if %COMPILINGPACKAGES{$name} {
+        return 1;
+    }
 
     # Otherwise, check in the namespace.
     my @parts := parse_name($name);
@@ -1288,17 +1293,23 @@ token typename {
 token term:sym<type_declarator>   { <type_declarator> }
 
 proto token quote { <...> }
-token quote:sym<apos>  { <?[']>             <quote_EXPR: ':q'>  }
-token quote:sym<dblq>  { <?["]>             <quote_EXPR: ':qq'> }
-token quote:sym<q>     { 'q'   <![(]> <.ws> <quote_EXPR: ':q'>  }
-token quote:sym<qq>    { 'qq'  <![(]> <.ws> <quote_EXPR: ':qq'> }
-token quote:sym<qx>    { 'qx'  <![(]> <.ws> <quote_EXPR: ':q'>  }
-token quote:sym<qqx>   { 'qqx' <![(]> <.ws> <quote_EXPR: ':qq'> }
-token quote:sym<Q>     { 'Q'   <![(]> <.ws> <quote_EXPR> }
+token quote:sym<apos>  { <?[']>                <quote_EXPR: ':q'>  }
+token quote:sym<dblq>  { <?["]>                <quote_EXPR: ':qq'> }
+token quote:sym<q>     { 'q'   >> <![(]> <.ws> <quote_EXPR: ':q'>  }
+token quote:sym<qq>    { 'qq'  >> <![(]> <.ws> <quote_EXPR: ':qq'> }
+token quote:sym<qx>    { 'qx'  >> <![(]> <.ws> <quote_EXPR: ':q'>  }
+token quote:sym<qqx>   { 'qqx' >> <![(]> <.ws> <quote_EXPR: ':qq'> }
+token quote:sym<Q>     { 'Q'   >> <![(]> <.ws> <quote_EXPR> }
 token quote:sym<Q:PIR> { 'Q:PIR'      <.ws> <quote_EXPR> }
 token quote:sym</null/> { '/' \s* '/' <.panic: "Null regex not allowed"> }
 token quote:sym</ />  { '/'<p6regex=.LANG('Regex','nibbler')>'/' <.old_rx_mods>? }
-token quote:sym<rx>   { <sym> >> '/'<p6regex=.LANG('Regex','nibbler')>'/' <.old_rx_mods>? }
+token quote:sym<rx>   {
+    <sym> >> 
+    [
+    | '/'<p6regex=.LANG('Regex','nibbler')>'/' <.old_rx_mods>?
+    | '{'<p6regex=.LANG('Regex','nibbler')>'}' <.old_rx_mods>?
+    ]
+}
 token quote:sym<m> {
     <sym> >>
     [
@@ -1425,7 +1436,7 @@ sub bracket_ending($matches) {
 method EXPR($preclim = '') {
     # Override this so we can set $*LEFTSIGIL.
     my $*LEFTSIGIL := '';
-    HLL::Grammar::EXPR(self, $preclim);
+    pir::find_method__pps(HLL::Grammar, 'EXPR')(self, $preclim);
 }
 
 token prefixish { 
