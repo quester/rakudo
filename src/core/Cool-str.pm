@@ -22,7 +22,7 @@ augment class Cool {
         }
     }
 
-    multi method subst($matcher, $replacement,  :g(:$global), :$x) {
+    multi method subst($matcher, $replacement, :g(:$global), :$x) {
         die "Can't combine :g/:global and :x in subst"
             if defined($global) && defined($x);
         my $limit = defined($x) ?? $x +1 !! 2;
@@ -177,19 +177,58 @@ augment class Cool {
         self gt '' ?? self.substr(0,1).lc ~ self.substr(1) !! ""
     }
 
-    our multi method match(Regex $pat, :$c = 0, :$g) {
-        if $g {
-            my $cont = $c;
-            gather while my $m = Regex::Cursor.parse(self, :rule($pat), :c($cont)) {
-                take $m;
-                if $m.to == $m.from {
-                    $cont = $m.to + 1;
-                } else {
-                    $cont = $m.to;
-                }
+    our multi method match(Regex $pat,
+                           :c(:$continue),
+                           :g(:$global),
+                           :pos(:$p),
+                           :$x,
+                           Mu :$nth,
+                           :ov(:$overlap)) {
+        if $continue ~~ Bool {
+            note ":c / :continue requires a position in the string";
+            fail ":c / :continue requires a position in the string";
+        }
+        my %opts;
+        %opts<p> = $p        if defined $p;
+        %opts<c> = $continue // 0 unless defined $p;
+        my $x_upper = -1;
+        if defined($x) {
+            if $x ~~ Range {
+                $x_upper = $x.excludes_max ?? $x.max - 1 !! $x.max;
+            } else {
+                $x_upper = $x;
             }
+        }
+
+        if $global || $nth.defined || $overlap || ($x.defined && $x_upper > 1) {
+            my $taken = 0;
+            my $i = 1;
+            my @r = gather while my $m = Regex::Cursor.parse(self, :rule($pat), |%opts) {
+                my $m-copy = $m;
+                unless $nth.defined && ($i !~~ any |$nth) {
+                    take $m-copy;
+                    $taken++;
+                }
+                last if $taken == $x_upper;
+
+                if ($overlap) {
+                    %opts<c> = $m.from + 1;
+                } else {
+                    if $m.to == $m.from {
+                        %opts<c> = $m.to + 1;
+                    } else {
+                        %opts<c> = $m.to;
+                    }
+                }
+
+                $i++;
+            }
+            if $x.defined && $taken !~~ $x {
+                return;
+            }
+            return |@r;
         } else {
-            Regex::Cursor.parse(self, :rule($pat), :c($c));
+            Regex::Cursor.parse(self, :rule($pat), |%opts);
         }
     }
 

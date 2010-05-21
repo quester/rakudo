@@ -3,6 +3,14 @@ role Numeric {
         self;
     }
 
+    method succ(Numeric $x:) {
+        $x + 1;
+    }
+
+    method pred(Numeric $x:) {
+        $x - 1;
+    }
+
     method abs(Numeric $x:) {
         note "$.WHAT() needs a version of .abs";
         fail "$.WHAT() needs a version of .abs";
@@ -29,6 +37,11 @@ role Numeric {
     method sqrt(Numeric $x:) {
         note "$.WHAT() needs a version of .sqrt";
         fail "$.WHAT() needs a version of .sqrt";
+    }
+
+    method roots(Numeric $x: Int $n) {
+        note "$.WHAT() needs a version of .roots";
+        fail "$.WHAT() needs a version of .roots";
     }
 
     INIT {
@@ -166,3 +179,7 @@ role Numeric {
 }
 
 multi sub infix:«cmp»(Numeric $a, Numeric $b) { $a <=> $b; }
+
+multi sub postfix:<i>(Numeric $z) {
+    $z * 1i;
+}
