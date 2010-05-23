@@ -2078,7 +2078,7 @@ method prefixish($/) {
         my $opsub := '&prefix:<' ~ $<OPER>.Str ~ '<<>';
         unless %*METAOPGEN{$opsub} {
             my $base_op := '&prefix:<' ~ $<OPER>.Str ~ '>';
-            @BLOCK[0].loadinit.push(PAST::Op.new(
+            get_outermost_block().loadinit.push(PAST::Op.new(
                 :pasttype('bind'),
                 PAST::Var.new( :name($opsub), :scope('package') ),
                 PAST::Op.new(
@@ -2098,7 +2098,7 @@ method infixish($/) {
         my $sym := ~$<infix><sym>;
         my $opsub := "&infix:<$sym=>";
         unless %*METAOPGEN{$opsub} {
-            @BLOCK[0].loadinit.push(
+            get_outermost_block().loadinit.push(
                 PAST::Op.new( :name('!gen_assign_metaop'), $sym,
                               :pasttype('call') )
             );
@@ -2129,7 +2129,7 @@ method infixish($/) {
                 $helper := '&zipwith';
             }
 
-            @BLOCK[0].loadinit.push(
+            get_outermost_block().loadinit.push(
                 PAST::Op.new( :pasttype('bind'),
                               PAST::Var.new( :name($opsub), :scope('package') ),
                               PAST::Op.new( :pasttype('callmethod'),
@@ -2149,7 +2149,7 @@ method prefix_circumfix_meta_operator:sym<reduce>($/) {
     my $opsub := '&prefix:<' ~ ~$/ ~ '>';
     unless %*METAOPGEN{$opsub} {
         my $base_op := '&infix:<' ~ $<op>.Str ~ '>';
-        @BLOCK[0].loadinit.push(PAST::Op.new(
+        get_outermost_block().loadinit.push(PAST::Op.new(
             :pasttype('bind'),
             PAST::Var.new( :name($opsub), :scope('package') ),
             PAST::Op.new(
@@ -2180,7 +2180,7 @@ sub make_hyperop($/) {
         my $base_op := '&infix:<' ~ $<infixish>.Str ~ '>';
         my $dwim_lhs := $<opening> eq '<<' || $<opening> eq '«';
         my $dwim_rhs := $<closing> eq '>>' || $<closing> eq '»';
-        @BLOCK[0].loadinit.push(PAST::Op.new(
+        get_outermost_block().loadinit.push(PAST::Op.new(
             :pasttype('bind'),
             PAST::Var.new( :name($opsub), :scope('package') ),
             PAST::Op.new(
@@ -2213,7 +2213,7 @@ method postfixish($/) {
             my $opsub := '&postfix:<>>' ~ $<OPER>.Str ~ '>';
             unless %*METAOPGEN{$opsub} {
                 my $base_op := '&postfix:<' ~ $<OPER>.Str ~ '>';
-                @BLOCK[0].loadinit.push(PAST::Op.new(
+                get_outermost_block().loadinit.push(PAST::Op.new(
                     :pasttype('bind'),
                     PAST::Var.new( :name($opsub), :scope('package') ),
                     PAST::Op.new(
@@ -2560,9 +2560,52 @@ class Perl6::RegexActions is Regex::P6Regex::Actions {
         make PAST::Regex.new( $past, :pasttype('pastnode') );
     }
 
-    method metachar:sym<{ }>($/) { make $<codeblock>.ast; }
+    method metachar:sym<var>($/) {
+        my $past;
+        my $name := $<pos> ?? +$<pos> !! ~$<name>;
+        if $<quantified_atom> {
+            if $<var> {
+                $/.CURSOR.panic('"$var = " syntax not yet supported in regexes');
+            }
+            $past := $<quantified_atom>[0].ast;
+            if $past.pasttype eq 'quant' && $past[0].pasttype eq 'subrule' {
+                Regex::P6Regex::Actions::subrule_alias($past[0], $name);
+            }
+            elsif $past.pasttype eq 'subrule' { Regex::P6Regex::Actions::subrule_alias($past, $name); }
+            else {
+                $past := PAST::Regex.new( $past, :name($name), :pasttype('subcapture'), :node($/) );
+            }
+        }
+        else {
+            if $<var> {
+                my @MODIFIERS := Q:PIR {
+                    %r = get_hll_global ['Regex';'P6Regex';'Actions'], '@MODIFIERS'
+                };
+                my $subtype := @MODIFIERS[0]<i> ?? 'interp_literal_i' !! 'interp_literal';
+                $past := PAST::Regex.new( $<var>.ast, :pasttype('pastnode'),
+                                          :subtype($subtype), :node($/) );
+            } else {
+                $past := PAST::Regex.new( '!BACKREF', $name, :pasttype('subrule'),
+                                          :subtype('method'), :node($/) );
+            }
+        }
+        make $past;
+    }
 
-    method assertion:sym<{ }>($/) { make $<codeblock>.ast; }
+    method assertion:sym<var>($/) {
+        make PAST::Regex.new( $<var>.ast, :pasttype('pastnode'),
+                              :subtype('interp_regex'), :node($/) );
+    }
+
+
+    method metachar:sym<{ }>($/) { 
+        make PAST::Regex.new(:node($/), :pasttype('pastnode'), $<codeblock>.ast); 
+    }
+
+    method assertion:sym<{ }>($/) { 
+        make PAST::Regex.new( :node($/), :pasttype('pastnode'), :subtype('interp_regex'),
+                              $<codeblock>.ast );
+    }
 
     method codeblock($/) {
         my $block := $<block>.ast;
@@ -2570,28 +2613,25 @@ class Perl6::RegexActions is Regex::P6Regex::Actions {
         make bindmatch($block);
     }
 
+    sub bindmatch($past) {
+        PAST::Stmts.new(
+            PAST::Op.new(
+                PAST::Var.new( :name('$/') ),
+                PAST::Op.new(
+                    PAST::Var.new( :name('$¢') ),
+                    :name('MATCH'),
+                    :pasttype('callmethod')
+                ),
+                :pasttype('bind')
+            ),
+            $past,
+        );
+    }
+
     method p6arglist($/) {
         my $arglist := $<arglist>.ast;
 #        make bindmatch($arglist);
         make $arglist;
-    }
-
-    sub bindmatch($past) {
-        PAST::Regex.new(
-            PAST::Stmts.new(
-                PAST::Op.new(
-                    PAST::Var.new( :name('$/') ),
-                    PAST::Op.new(
-                        PAST::Var.new( :name('$¢') ),
-                        :name('MATCH'),
-                        :pasttype('callmethod')
-                    ),
-                    :pasttype('bind')
-                ),
-                $past
-            ),
-            :pasttype('pastnode')
-        );
     }
 }
 
@@ -2947,6 +2987,13 @@ sub is_lexical($name) {
         }
     }
     return 0;
+}
+
+# Gets the outermost block. We sometimes want to install global things in
+# it, e.g. generated meta-ops.
+sub get_outermost_block() {
+    our @BLOCK;
+    return @BLOCK[+@BLOCK - 1];
 }
 
 # Looks to see if a variable has been set up as an alias to an attribute.
