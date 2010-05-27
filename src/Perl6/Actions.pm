@@ -196,12 +196,10 @@ method pblock($/) {
         $signature := Perl6::Compiler::Signature.new();
         unless $block.symbol('$_') {
             if $*IMPLICIT {
-                my $parameter := Perl6::Compiler::Parameter.new();
-                $parameter.var_name('$_');
-                $parameter.optional(1);
-                $parameter.is_parcel(1);
-                $parameter.default_from_outer(1);
-                $signature.add_parameter($parameter);
+                $signature.add_parameter(Perl6::Compiler::Parameter.new(
+                    :var_name('$_'), :optional(1),
+                    :is_parcel(1), :default_from_outer(1)
+                ));
             }
             else {
                 add_implicit_var($block, '$_', 1);
@@ -1882,7 +1880,7 @@ method term:sym<pir::op>($/) {
 method term:sym<*>($/) {
     my @name := Perl6::Grammar::parse_name('Whatever');
     make PAST::Op.new(
-        :pasttype('callmethod'), :name('new'), :node($/), :lvalue(1),
+        :pasttype('callmethod'), :name('new'), :node($/), :lvalue(1), :returns('Whatever'),
         PAST::Var.new( :name(@name.pop), :namespace(@name), :scope('package') )
     )
 }
@@ -2064,6 +2062,9 @@ method EXPR($/, $key?) {
     }
     else {
         for $/.list { if $_.ast { $past.push($_.ast); } }
+    }
+    if $key eq 'PREFIX' || $key eq 'INFIX' || $key eq 'POSTFIX' {
+        $past := whatever_curry($past);
     }
     make $past;
 }
@@ -2359,10 +2360,8 @@ method typename($/) {
                 PAST::Var.new( :name('$_'), :scope('lexical') )
             )
         );
-        my $sig := Perl6::Compiler::Signature.new();
-        my $param := Perl6::Compiler::Parameter.new();
-        $param.var_name('$_');
-        $sig.add_parameter($param);
+        my $sig := Perl6::Compiler::Signature.new(
+            Perl6::Compiler::Parameter.new(:var_name('$_')));
         add_signature($past, $sig, 0);
         $past := create_code_object($past, 'Block', 0, '');
     }
@@ -2934,10 +2933,8 @@ sub make_attr_init_closure($init_value) {
     );
     $block[0].unshift(PAST::Var.new( :name('self'), :scope('lexical'), :isdecl(1), :viviself(sigiltype('$')) ));
     $block.symbol('self', :scope('lexical'));
-    my $sig := Perl6::Compiler::Signature.new();
-    my $parameter := Perl6::Compiler::Parameter.new();
-    $parameter.var_name('$_');
-    $sig.add_parameter($parameter);
+    my $sig := Perl6::Compiler::Signature.new(
+        Perl6::Compiler::Parameter.new(:var_name('$_')));
     $sig.add_invocant();
     my $lazy_name := add_signature($block, $sig, 1);
     create_code_object(PAST::Op.new( :pirop('newclosure PP'), $block ), 'Method', 0, $lazy_name);
@@ -2991,21 +2988,13 @@ sub where_blockify($expr) {
         $past := create_code_object($expr<past_block>, 'Block', 0, $lazy_name);
     }
     else {
-        $past := PAST::Block.new( :blocktype('declaration'),
-            PAST::Stmts.new( ),
-            PAST::Stmts.new(
-                PAST::Op.new( :pasttype('call'), :name('&infix:<~~>'),
-                    PAST::Var.new( :name('$_'), :scope('lexical') ),
-                    $expr
-                )
-            )
-        );
-        my $sig := Perl6::Compiler::Signature.new();
-        my $param := Perl6::Compiler::Parameter.new();
-        $param.var_name('$_');
-        $sig.add_parameter($param);
-        my $lazy_name := add_signature($past, $sig, 1);
-        $past := create_code_object($past, 'Block', 0, $lazy_name);
+        my $sig := Perl6::Compiler::Signature.new(
+            Perl6::Compiler::Parameter.new(:var_name('$_')));
+        $past := make_block_from($sig, PAST::Op.new(
+            :pasttype('call'), :name('&infix:<~~>'),
+            PAST::Var.new( :name('$_'), :scope('lexical') ),
+            $expr
+        ));
     }
     $past
 }
@@ -3027,6 +3016,63 @@ sub capture_or_parcel($args, $name) {
     else {
         $args
     }
+}
+
+# This checks if we have something of the form * op *, * op <thing> or
+# <thing> op * and if so, and if it's not one of the ops we do not
+# auto-curry for, emits a closure instead. We hard-code the things not
+# to curry for now; in the future, we will inspect the multi signatures
+# of the op to decide, or likely store things in this hash from that
+# introspection and keep it as a quick cache.
+our %not_curried;
+INIT {
+    %not_curried{'&infix:<...>'} := 1;
+    %not_curried{'&infix:<..>'}  := 1;
+}
+sub whatever_curry($past) {
+    if $past.isa(PAST::Op) && !%not_curried{$past.name} {
+        if +@($past) == 2 && $past[0] ~~ PAST::Op && $past[0].returns eq 'Whatever'
+                          && $past[1] ~~ PAST::Op && $past[1].returns eq 'Whatever' {
+            # Curry left and right, two args.
+            $past.shift; $past.shift;
+            $past.push(PAST::Var.new( :name('$x'), :scope('lexical') ));
+            $past.push(PAST::Var.new( :name('$y'), :scope('lexical') ));
+            my $sig := Perl6::Compiler::Signature.new(
+                Perl6::Compiler::Parameter.new(:var_name('$x')),
+                Perl6::Compiler::Parameter.new(:var_name('$y')));
+            $past := make_block_from($sig, $past);
+        }
+        elsif +@($past) == 2 && $past[1] ~~ PAST::Op && $past[1].returns eq 'Whatever' {
+            # Curry right arg.
+            $past.pop;
+            $past.push(PAST::Var.new( :name('$y'), :scope('lexical') ));
+            my $sig := Perl6::Compiler::Signature.new(
+                Perl6::Compiler::Parameter.new(:var_name('$y')));
+            $past := make_block_from($sig, $past);
+        }
+        elsif (+@($past) == 1 || +@($past) == 2) && $past[0] ~~ PAST::Op && $past[0].returns eq 'Whatever' {
+            # Curry left (or for unary, only) arg.
+            $past.shift;
+            $past.unshift(PAST::Var.new( :name('$x'), :scope('lexical') ));
+            my $sig := Perl6::Compiler::Signature.new(
+                Perl6::Compiler::Parameter.new(:var_name('$x')));
+            $past := make_block_from($sig, $past);
+        }
+    }
+    $past
+}
+
+# Helper for constructing a simple Perl 6 Block with the given signature
+# and body.
+sub make_block_from($sig, $body) {
+    my $past := PAST::Block.new( :blocktype('declaration'),
+        PAST::Stmts.new( ),
+        PAST::Stmts.new(
+            $body
+        )
+    );
+    my $lazy_name := add_signature($past, $sig, 1);
+    create_code_object($past, 'Block', 0, $lazy_name);
 }
 
 # vim: ft=perl6
