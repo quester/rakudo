@@ -12,8 +12,8 @@ my $copyright_year = "2010";
 my $release = qq{
 
 	This is a development version of Rakudo Perl 6.  It comes after
-	development release #28 "Moscow" (22-Apr-2010) and before
-	development release #29 (est. 20-May-2010.)
+	development release #29 "Erlangen" (2010-05-20) and before
+	development release #30 (scheduled for 2010-06-17.)
 
 };
 
