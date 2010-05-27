@@ -1220,7 +1220,6 @@ token value:sym<quote>  { <quote> }
 token value:sym<number> { <number> }
 
 proto token number { <...> }
-token number:sym<rational> { <nu=.integer>'/'<de=.integer> }
 token number:sym<complex>  { <im=.numish>'\\'?'i' }
 token number:sym<numish>   { <numish> }
 
@@ -1806,32 +1805,24 @@ grammar Perl6::Regex is Regex::P6Regex::Grammar {
         ':' <?before 'my'> <statement=.LANG('MAIN', 'statement')> <.ws> ';'
     }
 
-    token metachar:sym<$> {
-        <sym> <!before \w>
-    }
-
-    token metachar:sym<var> {
-        [
-        | '$<' $<name>=[<-[>]>+] '>'
-        | '$' $<pos>=[\d+]
-        | <?before <[$@]> \w> <var=.LANG('MAIN', 'variable')>
-        | <?before '%' \w> <.panic: "Use of hash variable in patterns is reserved">
-        ]
- 
-        [ <.ws> '=' <.ws> <quantified_atom> ]?
-    }
-
-    token assertion:sym<var> {
-        | <?before <[$@]> \w> <var=.LANG('MAIN', 'variable')>
-        | <?before '%' \w> <.panic: "Use of hash variable in patterns is reserved">
-    }
-
     token metachar:sym<{ }> {
         <?[{]> <codeblock>
     }
 
+    token metachar:sym<rakvar> {
+        <?[$@&]> <?before .<?alpha>> <var=.LANG('MAIN', 'variable')>
+    }
+
     token assertion:sym<{ }> {
         <?[{]> <codeblock>
+    }
+
+    token assertion:sym<?{ }> {
+        $<zw>=[ <[?!]> <?before '{'> ] <codeblock>
+    }
+
+    token assertion:sym<var> {
+        <?[$@&]> <var=.LANG('MAIN', 'variable')>
     }
 
     token codeblock {

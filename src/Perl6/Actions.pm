@@ -245,15 +245,10 @@ method newpad($/) {
 }
 
 method outerlex($/) {
-    my $outer_ctx := %*COMPILING<%?OPTIONS><outer_ctx>;
-    if pir::defined__IP($outer_ctx) {
-        my $block := @BLOCK[0];
-        my %lexinfo := Perl6::Compiler.get_lexinfo($outer_ctx);
-        for %lexinfo { $block.symbol($_.key, :scope<lexical>); }
-        my @ns := pir::getattribute__PPs($outer_ctx, 'current_namespace').get_name;
-        @ns.shift;
-        $block.namespace(@ns);
-    }
+    # Use SET_BLOCK_OUTER_CTX (inherited from HLL::Actions)
+    # to set dynamic outer lexical context and namespace details
+    # for the compilation unit.
+    self.SET_BLOCK_OUTER_CTX(@BLOCK[0]);
 }
 
 method finishpad($/) {
@@ -2277,14 +2272,6 @@ method value:sym<number>($/) {
     make $<number>.ast;
 }
 
-method number:sym<rational>($/) {
-    make PAST::Op.new(
-        :pasttype('callmethod'), :name('new'),
-        PAST::Var.new( :name('Rat'), :namespace(''), :scope('package') ),
-        $<nu>.ast, $<de>.ast
-    );
-}
-
 method number:sym<complex>($/) {
     make PAST::Op.new(
         :pasttype('callmethod'), :name('new'),
@@ -2560,79 +2547,58 @@ class Perl6::RegexActions is Regex::P6Regex::Actions {
         make PAST::Regex.new( $past, :pasttype('pastnode') );
     }
 
-    method metachar:sym<var>($/) {
-        my $past;
-        my $name := $<pos> ?? +$<pos> !! ~$<name>;
-        if $<quantified_atom> {
-            if $<var> {
-                $/.CURSOR.panic('"$var = " syntax not yet supported in regexes');
-            }
-            $past := $<quantified_atom>[0].ast;
-            if $past.pasttype eq 'quant' && $past[0].pasttype eq 'subrule' {
-                Regex::P6Regex::Actions::subrule_alias($past[0], $name);
-            }
-            elsif $past.pasttype eq 'subrule' { Regex::P6Regex::Actions::subrule_alias($past, $name); }
-            else {
-                $past := PAST::Regex.new( $past, :name($name), :pasttype('subcapture'), :node($/) );
-            }
-        }
-        else {
-            if $<var> {
-                my @MODIFIERS := Q:PIR {
-                    %r = get_hll_global ['Regex';'P6Regex';'Actions'], '@MODIFIERS'
-                };
-                my $subtype := @MODIFIERS[0]<i> ?? 'interp_literal_i' !! 'interp_literal';
-                $past := PAST::Regex.new( $<var>.ast, :pasttype('pastnode'),
-                                          :subtype($subtype), :node($/) );
-            } else {
-                $past := PAST::Regex.new( '!BACKREF', $name, :pasttype('subrule'),
-                                          :subtype('method'), :node($/) );
-            }
-        }
-        make $past;
-    }
-
-    method assertion:sym<var>($/) {
-        make PAST::Regex.new( $<var>.ast, :pasttype('pastnode'),
-                              :subtype('interp_regex'), :node($/) );
-    }
-
-
     method metachar:sym<{ }>($/) { 
-        make PAST::Regex.new(:node($/), :pasttype('pastnode'), $<codeblock>.ast); 
+        make PAST::Regex.new( $<codeblock>.ast,
+                              :pasttype<pastnode>, :node($/) );
+    }
+
+    method metachar:sym<rakvar>($/) {
+        make PAST::Regex.new( '!INTERPOLATE', $<var>.ast,
+                              :pasttype<subrule>, :subtype<method>, :node($/));
     }
 
     method assertion:sym<{ }>($/) { 
-        make PAST::Regex.new( :node($/), :pasttype('pastnode'), :subtype('interp_regex'),
-                              $<codeblock>.ast );
+        make PAST::Regex.new( '!INTERPOLATE', 
+                 PAST::Op.new( :name<!MAKE_REGEX>, $<codeblock>.ast ),
+                 :pasttype<subrule>, :subtype<method>, :node($/));
+    }
+
+    method assertion:sym<?{ }>($/) {
+        make PAST::Regex.new( $<codeblock>.ast,
+                              :subtype<zerowidth>, :negate( $<zw> eq '!' ),
+                              :pasttype<pastnode>, :node($/) );
+    }
+
+    method assertion:sym<var>($/) {
+        make PAST::Regex.new( '!INTERPOLATE', 
+                 PAST::Op.new( :name<!MAKE_REGEX>, $<var>.ast ),
+                 :pasttype<subrule>, :subtype<method>, :node($/));
     }
 
     method codeblock($/) {
         my $block := $<block>.ast;
         $block.blocktype('immediate');
-        make bindmatch($block);
-    }
-
-    sub bindmatch($past) {
-        PAST::Stmts.new(
-            PAST::Op.new(
-                PAST::Var.new( :name('$/') ),
+        my $past := 
+            PAST::Stmts.new(
                 PAST::Op.new(
-                    PAST::Var.new( :name('$¢') ),
-                    :name('MATCH'),
-                    :pasttype('callmethod')
+                    PAST::Var.new( :name('$/') ),
+                    PAST::Op.new(
+                        PAST::Var.new( :name('$¢') ),
+                        :name('MATCH'),
+                        :pasttype('callmethod')
+                    ),
+                    :pasttype('bind')
                 ),
-                :pasttype('bind')
-            ),
-            $past,
-        );
+                $block
+            );
+        make $past;
     }
 
     method p6arglist($/) {
         my $arglist := $<arglist>.ast;
-#        make bindmatch($arglist);
         make $arglist;
     }
+
 }
 
 # Takes a block and adds a signature to it, as well as code to bind the call

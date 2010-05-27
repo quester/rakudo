@@ -22,7 +22,7 @@ augment class Cool {
         }
     }
 
-    multi method subst($matcher, $replacement, *%options) {
+    multi method subst($matcher, $replacement, :$samecase, *%options) {
         my @matches = self.match($matcher, |%options);
         return self unless @matches;
         return self if @matches == 1 && !@matches[0];
@@ -30,9 +30,10 @@ augment class Cool {
         my $result = '';
         for @matches -> $m {
             $result ~= self.substr($prev, $m.from - $prev);
-            $result ~= ~($replacement ~~ Callable
-                            ?? $replacement($m)
-                            !! $replacement);
+
+	    my $real_replacement = ~($replacement ~~ Callable ?? $replacement($m) !! $replacement);
+	    $real_replacement    = $real_replacement.samecase(~$m) if $samecase;
+            $result ~= $real_replacement;
             $prev = $m.to;
         }
         my $last = @matches.pop;
@@ -185,7 +186,7 @@ augment class Cool {
                            :g(:$global),
                            :pos(:$p),
                            :$x,
-                           Mu :$nth,
+                           :$nth,
                            :ov(:$overlap)) {
         if $continue ~~ Bool {
             note ":c / :continue requires a position in the string";
@@ -205,13 +206,29 @@ augment class Cool {
         }
 
         if $global || $nth.defined || $overlap || ($x.defined && $x_upper > 1) {
+            my $next-index;
+            my $next-iterator;
+            if $nth.defined {
+                $next-iterator = $nth.list.iterator;
+                $next-index = $next-iterator.get;
+                return if $next-index ~~ EMPTY || +$next-index < 1;
+            }
+
             my $taken = 0;
             my $i = 1;
-            my @r = gather while my $m = Cursor.parse(self, :rule($pat), |%opts) {
+            my @r = gather while my $m = Regex::Cursor.parse(self, :rule($pat), |%opts) {
                 my $m-copy = $m;
-                unless $nth.defined && ($i !~~ any |$nth) {
+                if !$nth.defined || $i == $next-index {
                     take $m-copy;
                     $taken++;
+
+                    if ($nth.defined) {
+                        $next-index = $next-iterator.get;
+                        while $next-index !~~ EMPTY && $next-index <= $i  {
+                            $next-index = $next-iterator.get;
+                        }
+                        last if $next-index ~~ EMPTY;
+                    }
                 }
                 last if $taken == $x_upper;
 
@@ -232,7 +249,7 @@ augment class Cool {
             }
             return |@r;
         } else {
-            Cursor.parse(self, :rule($pat), |%opts);
+            Regex::Cursor.parse(self, :rule($pat), |%opts);
         }
     }
     multi method match($pat, *%options) {

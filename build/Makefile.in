@@ -83,6 +83,7 @@ BUILTINS_PIR = \
   src/glue/dispatch.pir \
   src/glue/enum.pir \
   src/glue/phasers.pir \
+  src/glue/regex.pir \
   src/glue/role.pir \
   src/glue/run.pir \
   src/glue/types.pir \
@@ -176,7 +177,6 @@ CORE_SOURCES = \
   src/core/Bool.pm \
   src/core/Parcel.pm \
   src/core/Any.pm \
-  src/core/Cursor.pm \
   src/core/Any-list.pm \
   src/core/Cool-num.pm \
   src/core/Cool-str.pm \
