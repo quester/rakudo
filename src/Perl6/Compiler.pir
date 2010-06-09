@@ -17,8 +17,21 @@ Perl6::Compiler - Perl6 compiler
 .loadlib 'perl6_group'
 .loadlib 'perl6_ops'
 .loadlib 'math_ops'
+
 # for gcd
 .loadlib  'obscure_ops'
+
+# for pow
+.loadlib 'trans_ops'
+
+# for bors
+.loadlib 'bit_ops'
+
+#for printerr
+.loadlib 'io_ops'
+
+#for sysinfo
+.loadlib 'sys_ops'
 
 .sub '' :anon :load :init
     load_bytecode 'P6Regex.pbc'
@@ -104,6 +117,7 @@ Perl6::Compiler - Perl6 compiler
 .include 'src/gen/locator_pm.pir'
 .include 'src/gen/versiondetectionactions_pm.pir'
 .include 'src/gen/loader_pm.pir'
+.include 'src/gen/backtraceprinter_pm.pir'
 .include 'src/gen/perl6-grammar.pir'
 .include 'src/gen/perl6-actions.pir'
 
@@ -177,6 +191,13 @@ Perl6::Compiler - Perl6 compiler
     .return (module)
 .end
 
+.sub 'backtrace' :method
+    .param pmc exception
+    $P0 = get_hll_global ['Perl6'], 'BacktracePrinter'
+    $S0 = $P0.'backtrace_for'(exception)
+    .return ($S0)
+.end
+
 .sub 'main' :main
     .param pmc args_str
     # Fire any of the setting's INIT phasers before we enter the runloop, so
@@ -188,11 +209,18 @@ Perl6::Compiler - Perl6 compiler
     exit 0
 .end
 
+.sub '' :anon
+    .annotate 'file', 'CORE.setting'
+.end
 .include 'src/gen/core.pir'
 
 # Cheats go at the end, because some of them are in the 'parrot' HLL
 # namespace.
 .include 'src/gen/cheats.pir'
+
+.sub '' :anon
+    .annotate 'file', ''
+.end
 
 =cut
 

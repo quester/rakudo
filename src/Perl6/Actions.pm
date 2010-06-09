@@ -101,6 +101,12 @@ method comp_unit($/, $key?) {
         )
     );
 
+    # Add file annotation.
+    my $file := pir::find_caller_lex__ps('$?FILES');
+    unless pir::isnull($file) {
+        $unit.unshift(PAST::Op.new(:inline(".annotate 'file', '" ~ $file ~ "'")));
+    }
+
     # Remove the outer module package.
     @PACKAGE.shift;
 
@@ -645,6 +651,9 @@ method colonpair($/) {
         else {
             make make_pair($*key, PAST::Var.new( :name('True'), :namespace('Bool'), :scope('package') ));
         }
+    }
+    elsif $<fakesignature> {
+        make $<fakesignature>.ast.ast;   # XXX: Huh?
     }
     else {
         make $*value.ast;
@@ -1457,10 +1466,6 @@ method multisig($/) {
     make $<signature>.ast;
 }
 
-method sigterm($/) {
-    make $<fakesignature>.ast.ast;
-}
-
 method fakesignature($/) {
     @BLOCK.shift;
     make $<signature>.ast;
@@ -1555,7 +1560,12 @@ method param_var($/) {
             }
         }
         elsif $twigil ne '!' && $twigil ne '.' && $twigil ne '*' {
-            $/.CURSOR.panic("Illegal to use $twigil twigil in signature");
+            my $error := "In signature parameter, '" ~ ~$/ ~ "', it is illegal to use '" ~ $twigil ~ "' twigil";
+            if $twigil eq ':' {
+                $error := "In signature parameter, placeholder variables like " ~ ~$/ ~ " are illegal\n"
+                           ~ "you probably meant a named parameter: ':" ~ $<sigil> ~ ~$<name>[0] ~ "'";
+            }
+            $/.CURSOR.panic($error);
         }
     }
 }
@@ -1860,6 +1870,7 @@ method term:sym<name>($/) {
         }
         else { $past.name('&' ~ $name); }
     }
+    $past.node($/);
     make $past;
 }
 
@@ -1971,37 +1982,29 @@ method circumfix:sym<{ }>($/) {
     # element of which is either a hash or a pair, it's a hash constructor.
     my $past := $<pblock>.ast;
     my $is_hash := 0;
-    if +@($past) == 2 {
-        if +@($past[1]) == 0 {
-            # Empty block, so a hash.
+    my $stmts := +$<pblock><blockoid><statementlist><statement>;
+    if $stmts == 0 {
+        # empty block, so a hash
+        $is_hash := 1;
+    }
+    elsif $stmts == 1 {
+        my $elem := $past[1][0];
+        if $elem ~~ PAST::Op && $elem.name eq '&infix:<,>' {
+            # block contains a list, so test the first element
+            $elem := $elem[0];
+        }
+        if $elem ~~ PAST::Op 
+                && ($elem.returns eq 'Pair' || $elem.name eq '&infix:<=>>') {
+            # first item is a pair
             $is_hash := 1;
         }
-        elsif +@($past[1]) == 1 && $past[1][0].isa(PAST::Op) {
-            if $past[1][0].returns() eq 'Pair' || $past[1][0].name() eq '&infix:<=>>' {
-                # Block with just one pair in it, so a hash.
-                $is_hash := 1;
-            }
-            elsif $past[1][0].name() eq '&infix:<,>' {
-                # List, but first elements must be...
-                if $past[1][0][0].isa(PAST::Op) &&
-                        ($past[1][0][0].returns() eq 'Pair' || $past[1][0][0].name() eq '&infix:<=>>') {
-                    # ...a Pair
-                    $is_hash := 1;
-                }
-                elsif $past[1][0][0].isa(PAST::Var) &&
-                        pir::substr__SSII($past[1][0][0].name(), 0, 1) eq '%' {
-                    # ...or a hash.
-                    $is_hash := 1
-                }
-            }
-        }
-        elsif +@($past[1]) == 1 && $past[1][0].isa(PAST::Var) {
-            if pir::substr__SSII($past[1][0].name(), 0, 1) eq '%' {
-                $is_hash := 1;
-            }
+        elsif $elem ~~ PAST::Var
+                && pir::substr($elem.name, 0, 1) eq '%' {
+            # first item is a hash
+            $is_hash := 1;
         }
     }
-    if $is_hash {
+    if $is_hash && $past.arity < 1 {
         my @children := @($past[1]);
         $past := PAST::Op.new(
             :pasttype('call'),
@@ -2065,7 +2068,7 @@ method EXPR($/, $key?) {
         for $/.list { if $_.ast { $past.push($_.ast); } }
     }
     if $key eq 'PREFIX' || $key eq 'INFIX' || $key eq 'POSTFIX' {
-        $past := whatever_curry($past);
+        $past := whatever_curry($past, $key eq 'INFIX' ?? 2 !! 1);
     }
     make $past;
 }
@@ -2106,8 +2109,8 @@ method infixish($/) {
 
     if $<infix_prefix_meta_operator> {
         my $metaop := ~$<infix_prefix_meta_operator><sym>;
-        my $sym := ~$<infix_prefix_meta_operator><infixish>;
-        my $opsub := "&infix:<$metaop$sym>";
+        my $sym := ~$<infix_prefix_meta_operator><infixish><OPER>;
+        my $opsub := "&infix:<$/>";
         my $base_opsub := "&infix:<$sym>";
         if $opsub eq "&infix:<!=>" {
             $base_opsub := "&infix:<==>";
@@ -2115,7 +2118,7 @@ method infixish($/) {
         unless %*METAOPGEN{$opsub} {
             my $helper := "";
             if $metaop eq '!' {
-                $helper := '&notresults';
+                $helper := '&negate';
             } elsif $metaop eq 'R' {
                 $helper := '&reverseargs';
             } elsif $metaop eq 'S' {
@@ -2140,12 +2143,16 @@ method infixish($/) {
 
         make PAST::Op.new( :name($opsub), :pasttype('call') );
     }
+
+    if $<infixish> {
+        make $<infixish>.ast;
+    }
 }
 
 method prefix_circumfix_meta_operator:sym<reduce>($/) {
     my $opsub := '&prefix:<' ~ ~$/ ~ '>';
     unless %*METAOPGEN{$opsub} {
-        my $base_op := '&infix:<' ~ $<op>.Str ~ '>';
+        my $base_op := '&infix:<' ~ $<op><OPER>.Str ~ '>';
         get_outermost_block().loadinit.push(PAST::Op.new(
             :pasttype('bind'),
             PAST::Var.new( :name($opsub), :scope('package') ),
@@ -2174,7 +2181,7 @@ method infix_circumfix_meta_operator:sym<« »>($/) {
 sub make_hyperop($/) {
     my $opsub := '&infix:<' ~ ~$/ ~ '>';
     unless %*METAOPGEN{$opsub} {
-        my $base_op := '&infix:<' ~ $<infixish>.Str ~ '>';
+        my $base_op := '&infix:<' ~ $<infixish><OPER>.Str ~ '>';
         my $dwim_lhs := $<opening> eq '<<' || $<opening> eq '«';
         my $dwim_rhs := $<closing> eq '>>' || $<closing> eq '»';
         get_outermost_block().loadinit.push(PAST::Op.new(
@@ -2287,7 +2294,7 @@ method number:sym<numish>($/) {
 }
 
 method numish($/) {
-    if $<integer> { make PAST::Val.new( :value($<integer>.ast) ); }
+    if $<integer> { make PAST::Val.new( :value($<integer>.ast), :returns('Int') ); }
     elsif $<dec_number> { make $<dec_number>.ast; }
     elsif $<rad_number> { make $<rad_number>.ast; }
     else {
@@ -2492,13 +2499,13 @@ method quote_EXPR($/) {
         }
         else {
             my @words := HLL::Grammar::split_words($/, $past.value);
-            if +@words > 1 {
+            if +@words != 1 {
                 $past := PAST::Op.new( :name('&infix:<,>'), :node($/) );
                 for @words { $past.push($_); }
                 $past := PAST::Stmts.new($past);
             }
             else {
-                $past := PAST::Val.new(:value(~@words[0]), :returns<Str>);
+                $past := PAST::Val.new( :value(~@words[0]), :returns('Str') );
             }
         }
     }
@@ -3029,11 +3036,12 @@ our %not_curried;
 INIT {
     %not_curried{'&infix:<...>'} := 1;
     %not_curried{'&infix:<..>'}  := 1;
+    %not_curried{'&infix:<~~>'}  := 1;
 }
-sub whatever_curry($past) {
+sub whatever_curry($past, $upto_arity) {
     if $past.isa(PAST::Op) && !%not_curried{$past.name} {
-        if +@($past) == 2 && $past[0] ~~ PAST::Op && $past[0].returns eq 'Whatever'
-                          && $past[1] ~~ PAST::Op && $past[1].returns eq 'Whatever' {
+        if $upto_arity == 2 && $past[0] ~~ PAST::Op && $past[0].returns eq 'Whatever'
+                            && $past[1] ~~ PAST::Op && $past[1].returns eq 'Whatever' {
             # Curry left and right, two args.
             $past.shift; $past.shift;
             $past.push(PAST::Var.new( :name('$x'), :scope('lexical') ));
@@ -3043,7 +3051,7 @@ sub whatever_curry($past) {
                 Perl6::Compiler::Parameter.new(:var_name('$y')));
             $past := make_block_from($sig, $past);
         }
-        elsif +@($past) == 2 && $past[1] ~~ PAST::Op && $past[1].returns eq 'Whatever' {
+        elsif $upto_arity == 2 && $past[1] ~~ PAST::Op && $past[1].returns eq 'Whatever' {
             # Curry right arg.
             $past.pop;
             $past.push(PAST::Var.new( :name('$y'), :scope('lexical') ));
@@ -3051,7 +3059,7 @@ sub whatever_curry($past) {
                 Perl6::Compiler::Parameter.new(:var_name('$y')));
             $past := make_block_from($sig, $past);
         }
-        elsif (+@($past) == 1 || +@($past) == 2) && $past[0] ~~ PAST::Op && $past[0].returns eq 'Whatever' {
+        elsif $upto_arity >= 1 && $past[0] ~~ PAST::Op && $past[0].returns eq 'Whatever' {
             # Curry left (or for unary, only) arg.
             $past.shift;
             $past.unshift(PAST::Var.new( :name('$x'), :scope('lexical') ));
