@@ -5,6 +5,10 @@ role Real does Numeric {
         fail "Bridge must be defined for the Real type " ~ self.WHAT;
     }
 
+    method Real() {
+        self;
+    }
+
     method Bool() {
         self != 0 ?? Bool::True !! Bool::False;
     }
@@ -23,6 +27,10 @@ role Real does Numeric {
 
     method Complex() {
         Complex.new(self, 0);
+    }
+
+    method Str() {
+        self.Num.Str;
     }
 
     method reals() {
