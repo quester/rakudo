@@ -315,6 +315,7 @@ S05-substitution/match.t
 S05-substitution/subst.t
 S05-transliteration/trans.t
 # S05-transliteration/with-closure.t
+S06-advanced_subroutine_features/callframe.t
 S06-advanced_subroutine_features/lexical-subs.t
 S06-advanced_subroutine_features/recurse.t
 S06-advanced_subroutine_features/return.t
@@ -508,7 +509,7 @@ S32-hash/push.t
 # S32-io/chdir.t
 S32-io/file-tests.t
 S32-io/note.t
-# S32-io/IO-Socket-INET.t
+S32-io/IO-Socket-INET.t
 S32-list/classify.t
 ## S32-list/create.t
 S32-list/end.t
