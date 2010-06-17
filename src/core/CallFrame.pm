@@ -4,7 +4,7 @@ class CallFrame {
     method !annotations {
         my $i = $!interp;
         my $l = $!level;
-        Q:PIR {
+        CREATE_HASH_FROM_LOW_LEVEL Q:PIR {
             .local pmc interp
             .local int level
 
@@ -17,15 +17,13 @@ class CallFrame {
     }
 
     method line() {
-        my $ann = self!annotations();
-        $ann<line>;
+        self!annotations()<fline>;
     }
     method file() {
-        my $ann = self!annotations();
-        $ann<file>;
+        self!annotations()<file>;
     }
 
-    method callframe(Int $level) {
+    method callframe(Int $level = 0) {
         CallFrame.new(:interp($!interp), :level($!level + $level));
     }
 
