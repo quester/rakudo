@@ -1,6 +1,7 @@
 class IO is Cool {
     has $!PIO;
     has $!ins;
+    has $.autoflush is rw;
 
     multi method close() is export {
         try {
@@ -13,7 +14,7 @@ class IO is Cool {
         ?$!PIO.eof();
     }
 
-    multi method get() is export {
+    multi method get() {
         my $x = $!PIO.readline;
         fail if $.eof && $x eq '';
         $!ins++;
@@ -34,11 +35,25 @@ class IO is Cool {
         }
     }
 
+    method open($filename, :$r, :$w, :$a) {
+        if $!PIO { $!PIO.close; $!PIO = Nil; }
+        my $mode = $w ?? 'w' !! ($a ?? 'wa' !! 'r');
+        $!PIO = $filename eq '-'
+                ?? pir::getstdin__P()
+                !! pir::open__PSS($filename, $mode);
+        unless pir::istrue__IP($!PIO) {
+            fail("Unable to open file '$filename'");
+        }
+        $!PIO.encoding('utf8');
+        self;
+    }
+
     multi method print(*@items) {
         try {
             for @items -> $item {
                 (pir::descalarref__PP($!PIO)).print($item);
             }
+            pir::descalarref__PP($!PIO).flush() if $.autoflush;
         }
         $! ?? fail($!) !! Bool::True;
     }
@@ -66,7 +81,9 @@ class IO is Cool {
     }
 }
 
-multi sub lines(IO $filehandle,
+multi sub get(IO $filehandle = $*ARGFILES) { $filehandle.get };
+
+multi sub lines(IO $filehandle = $*ARGFILES,
                 :$bin = False,
                 :$enc = 'Unicode',
                 :$nl = "\n",
@@ -95,7 +112,7 @@ sub open($filename, :$r, :$w, :$a) {
     my $mode = $w ?? 'w' !! ($a ?? 'wa' !! 'r');
     my $PIO = pir::open__PSS($filename, $mode);
     unless pir::istrue__IP($PIO) {
-        die("Unable to open file '$filename'");
+        fail("Unable to open file '$filename'");
     }
     $PIO.encoding('utf8');
     IO.new(:$PIO)

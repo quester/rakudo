@@ -234,6 +234,14 @@ token comment:sym<#`(...)> {
     [ <quote_EXPR> || <.panic: "Opening bracket is required for #` comment"> ]
 }
 
+token comment:sym<#=(...)> {
+    '#=' <quote_EXPR>
+}
+
+token comment:sym<#=> {
+    '#=' $<attachment>=[\N*]
+}
+
 token pod_comment {
     ^^ \h* '='
     [
@@ -470,6 +478,7 @@ token statement_prefix:sym<BEGIN> { <sym> <blorst> }
 token statement_prefix:sym<CHECK> { <sym> <blorst> }
 token statement_prefix:sym<INIT>  { <sym> <blorst> }
 token statement_prefix:sym<END>   { <sym> <blorst> }
+token statement_prefix:sym<sink>  { <sym> <blorst> }
 token statement_prefix:sym<try>   { <sym> <blorst> }
 token statement_prefix:sym<gather>{ <sym> <blorst> }
 token statement_prefix:sym<do>    { <sym> <blorst> }
@@ -482,8 +491,11 @@ token blorst {
 
 proto token statement_mod_cond { <...> }
 
-token statement_mod_cond:sym<if>     { <sym> :s <cond=.EXPR> }
-token statement_mod_cond:sym<unless> { <sym> :s <cond=.EXPR> }
+rule modifier_expr { <EXPR> }
+
+token statement_mod_cond:sym<if>     { <sym> <modifier_expr> }
+token statement_mod_cond:sym<unless> { <sym> <modifier_expr> }
+token statement_mod_cond:sym<when>   { <sym> <modifier_expr> }
 
 proto token statement_mod_loop { <...> }
 
@@ -1193,6 +1205,7 @@ token term:sym<name> {
             my $longname := $<longname>.Str;
             pir::substr($longname, 0, 2) eq '::' || $/.CURSOR.is_name($longname)
         }>
+        <.unsp>? [ <?before '['> '[' ~ ']' <arglist> ]?
     || <args>
     ]
 }
@@ -1297,7 +1310,7 @@ token typename {
       }>
     ]
     # parametric type?
-#    <.unsp>? [ <?before '['> <postcircumfix> ]?
+    <.unsp>? [ <?before '['> '[' ~ ']' <arglist> ]?
     [<.ws> 'of' <.ws> <typename> ]?
 }
 
@@ -1669,7 +1682,9 @@ token infix:sym<*>    { <sym>  <O('%multiplicative')> }
 token infix:sym</>    { <sym>  <O('%multiplicative')> }
 token infix:sym<div>  { <sym>  <O('%multiplicative')> }
 token infix:sym<%>    { <sym>  <O('%multiplicative')> }
+token infix:sym<!%>   { <sym> <panic("Infix !% is deprecated in favor of infix %%")> }
 token infix:sym<mod>  { <sym>  <O('%multiplicative')> }
+token infix:sym<%%>   { <sym>  <O('%multiplicative')> }
 token infix:sym<+&>   { <sym>  <O('%multiplicative')> }
 token infix:sym<~&>   { <sym>  <O('%multiplicative')> }
 token infix:sym<?&>   { <sym>  <O('%multiplicative')> }
