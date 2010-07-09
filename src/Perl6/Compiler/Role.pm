@@ -76,11 +76,7 @@ method finish($block) {
             :pasttype('callmethod'),
             :name('add_method'),
             $meta_reg, $obj_reg, ~$_, 
-            PAST::Op.new(
-                :pasttype('callmethod'),
-                :name('clone'),
-                %methods{~$_}<code_ref>
-            )
+             PAST::Op.new( :pasttype('callmethod'), :name('clone'), %methods{~$_}<code_ref> )
         ));
     }
 
@@ -114,7 +110,7 @@ method finish($block) {
     # We need the block to get the signature, or a default one, plus the
     # decl code as a body.
     my $sig := pir::defined__IP($!signature) ?? $!signature !! Perl6::Compiler::Signature.new();
-    my $lazy_sig_block_name := Perl6::Actions::add_signature($block, $sig, 1);
+    Perl6::Actions::add_signature($block, $sig, 1);
     $block.push($decl);
     $block.blocktype('declaration');
     $block.nsentry('');
@@ -144,7 +140,7 @@ method finish($block) {
             PAST::Op.new(
                 :pasttype('callmethod'), :name('!add_variant'),
                 PAST::Var.new( :name('master_role'), :scope('register') ),
-                Perl6::Actions::create_code_object(PAST::Val.new( :value($block) ), 'Sub', 1, $lazy_sig_block_name)
+                Perl6::Actions::block_closure(Perl6::Actions::blockref($block), 'Sub', 1)
             )
         );
         
@@ -194,7 +190,7 @@ method finish($block) {
             ),
             PAST::Op.new( :pasttype('callmethod'), :name('!add_variant'),
                 PAST::Var.new( :name('tmp_role'), :scope('register') ),
-                Perl6::Actions::create_code_object($block, 'Sub', 1, $lazy_sig_block_name)
+                Perl6::Actions::block_closure($block, 'Sub', 1)
             ),
             PAST::Var.new( :name('tmp_role'), :scope('register') )
         );
