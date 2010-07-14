@@ -224,10 +224,9 @@ CORE_SOURCES = \
   src/core/Grammar.pm \
   src/core/Substitution.pm \
   src/core/system.pm \
-  src/cheats/match-bool.pm \
   src/cheats/process.pm \
   src/core/Date.pm \
-  src/core/Temporal.pm \
+  src/core/DateTime.pm \
   src/core/Match.pm \
   src/core/Attribute.pm \
   src/core/CallFrame.pm \
@@ -284,8 +283,8 @@ HARNESS_WITH_FUDGE_JOBS = $(HARNESS_WITH_FUDGE) --jobs
 
 STAGESTATS = @stagestats@
 
-# the default target
-all: $(PERL6_EXE) Test.pir lib/Safe.pir
+# the default target, TODO: make libraries in 'lib' a variable.
+all: $(PERL6_EXE) Test.pir lib/DateTime/strftime.pir
 
 # the install target
 install: all
@@ -295,6 +294,10 @@ install: all
 	$(CP)     Test.pir            $(DESTDIR)$(PERL6_LANG_DIR)/lib
 	$(CP)     lib/*.pm            $(DESTDIR)$(PERL6_LANG_DIR)/lib
 	$(CP)     lib/*.pir           $(DESTDIR)$(PERL6_LANG_DIR)/lib
+	$(MKPATH)                     $(DESTDIR)$(PERL6_LANG_DIR)/lib/DateTime
+	$(CP)     lib/DateTime/*.pm   $(DESTDIR)$(PERL6_LANG_DIR)/lib/DateTime
+	$(CP)     lib/DateTime/*.pir  $(DESTDIR)$(PERL6_LANG_DIR)/lib/DateTime
+
 	$(MKPATH)                     $(DESTDIR)$(PARROT_LIB_DIR)/dynext
 	$(CP)     $(DYNPMC) $(DYNOPS) $(DESTDIR)$(PARROT_LIB_DIR)/dynext
 	$(MKPATH)                     $(DESTDIR)$(PARROT_BIN_DIR)
@@ -414,13 +417,14 @@ $(PMC_DIR)/objectref.pmc : $(PMC_DIR)/objectref_pmc.template build/gen_objectref
 	$(PERL) -I$(PARROT_PERL_LIB) build/gen_objectref_pmc.pl $(PMC_DIR)/objectref_pmc.template \
 		$(PMC_DIR)/objectref.pmc
 
-lib/Safe.pir: lib/Safe.pm perl6.pbc
-	$(PARROT) $(PARROT_ARGS) perl6.pbc $(STAGESTATS) --target=pir --output=lib/Safe.pir lib/Safe.pm
-
 ##  testing targets
 Test.pir: Test.pm perl6.pbc
 	$(PARROT) $(PARROT_ARGS) perl6.pbc $(STAGESTATS) --target=pir --output=Test.pir Test.pm
 
+
+## loadable libraries. This should be refactored into something generic.
+lib/DateTime/strftime.pir: lib/DateTime/strftime.pm perl6.pbc
+	$(PARROT) $(PARROT_ARGS) perl6.pbc $(STAGESTATS) --target=pir --output=lib/DateTime/strftime.pir lib/DateTime/strftime.pm
 
 test    : coretest
 
@@ -457,7 +461,7 @@ rakudo_test_run.tar.gz: testable t/spectest.data
 spectest_smolder: rakudo_test_run.tar.gz
 	curl -F architecture=@cpuarch@ -F platform=@osname@ -F revision=`git log -1 --pretty=format:%H` -F report_file=@rakudo_test_run.tar.gz http://smolder.plusthree.com/app/public_projects/process_add_report/18
 
-testable : $(PERL6_EXE) Test.pir spectest_checkout spectest_update
+testable : all spectest_checkout spectest_update
 
 t/localtest.data:
 	$(PERL) -MExtUtils::Command -e test_f $@
