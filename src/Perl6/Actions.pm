@@ -3,20 +3,29 @@ class Perl6::Actions is HLL::Actions;
 our @BLOCK;
 our @PACKAGE;
 our $TRUE;
-our %BEGINDONE;
+our @MAX_PERL_VERSION;
+
+our $FORBID_PIR;
+our $STATEMENT_PRINT;
 
 INIT {
     # initialize @BLOCK and @PACKAGE
     our @BLOCK := Q:PIR { %r = root_new ['parrot';'ResizablePMCArray'] };
     our @PACKAGE := Q:PIR { %r = root_new ['parrot';'ResizablePMCArray'] };
     our $TRUE := PAST::Var.new( :name('true'), :scope('register') );
-    our %BEGINDONE := Q:PIR { %r = root_new ['parrot';'Hash'] };
 
     # Tell PAST::Var how to encode Perl6Str and Str values
     my %valflags :=
         Q:PIR { %r = get_hll_global ['PAST';'Compiler'], '%valflags' };
     %valflags<Perl6Str> := 'e';
     %valflags<Str>      := 'e';
+
+    # If, e.g., we support Perl up to v6.1.2, set
+    # @MAX_PERL_VERSION to [6, 1, 2].
+    @MAX_PERL_VERSION[0] := 6;
+
+    $FORBID_PIR := 0;
+    $STATEMENT_PRINT := 0;
 }
 
 sub xblock_immediate($xblock) {
@@ -65,6 +74,28 @@ method comp_unit($/, $key?) {
         make $unit;
         return 1;
     }
+
+    # XXX To work around the role outers bug, we need to fix up the
+    # contexts marked for re-capture.
+    $mainline.unshift(PAST::Op.new(
+        :inline('    $P0 = get_hll_global "@!recapture"',
+                '  recapture_loop:',
+                '    unless $P0 goto recapture_loop_end',
+                '    $P1 = shift $P0',
+                '    fixup_outer_ctx $P1',
+                '    goto recapture_loop',
+                '  recapture_loop_end:',)
+    ));
+
+    $unit.loadinit.unshift(
+        PAST::Op.new( :pasttype<inline>,
+            :inline('    $P0 = find_name "!UNIT_OUTER"',
+                    '    unless null $P0 goto have_perl6',
+                    '    load_language "perl6"',
+                    '  have_perl6:',
+                    '    "!UNIT_OUTER"(block)')
+        )
+    );
 
     my $mainparam := PAST::Var.new(:name('$MAIN'), :scope('parameter'),
                          :viviself( PAST::Val.new( :value(0) ) ) );
@@ -172,7 +203,7 @@ method statementlist($/) {
             }
         }
     }
-    $past.push(PAST::Op.new(:name('&Nil'))) if +$past.list < 1;
+    $past.push(PAST::Var.new(:name('Nil'), :namespace([]), :scope('package'))) if +$past.list < 1;
     make $past;
 }
 
@@ -181,7 +212,9 @@ method semilist($/) {
     if $<statement> {
         for $<statement> { $past.push($_.ast); }
     }
-    else { $past.push( PAST::Op.new( :name('&Nil') ) ); }
+    else { 
+        $past.push( PAST::Op.new( :name('&infix:<,>') ) );
+    }
     make $past;
 }
 
@@ -193,7 +226,7 @@ method statement($/, $key?) {
         $past := $<EXPR>.ast;
         if $mc {
             $mc.ast.push($past);
-            $mc.ast.push(PAST::Op.new(:name('&Nil')));
+            $mc.ast.push(PAST::Var.new(:name('Nil'), :namespace([]), :scope('package')));
             $past := $mc.ast;
         }
         if $ml {
@@ -210,11 +243,17 @@ method statement($/, $key?) {
                 );
             }
             elsif ~$ml<sym> eq 'for' {
-                $past := PAST::Block.new( :blocktype('immediate'),
-                    PAST::Var.new( :name('$_'), :scope('parameter'), :isdecl(1) ),
-                    $past);
-                $cond := PAST::Op.new(:name('&flat'), $cond);
-                $past := PAST::Op.new($cond, $past, :pasttype(~$ml<sym>), :node($/) );
+                unless $past<block_past> {
+                    my $sig := Perl6::Compiler::Signature.new(
+                                   Perl6::Compiler::Parameter.new(:var_name('$_')));
+                    $past := block_closure(blockify($past, $sig), 'Block', 0);
+                }
+                $past := PAST::Op.new( 
+                             :pasttype<callmethod>, :name<map>, :node($/),
+                             PAST::Op.new( :name<&flat>, $cond ),
+                             $past
+                         );
+                $past := PAST::Op.new( :name<&eager>, $past, :node($/) );
             }
             else {
                 $past := PAST::Op.new($cond, $past, :pasttype(~$ml<sym>), :node($/) );
@@ -223,6 +262,15 @@ method statement($/, $key?) {
     }
     elsif $<statement_control> { $past := $<statement_control>.ast; }
     else { $past := 0; }
+    if $STATEMENT_PRINT && $past {
+        $past := PAST::Stmts.new(:node($/),
+            PAST::Op.new(
+                :pirop<say__vs>,
+                PAST::Val.new(:value(~$/))
+            ),
+            $past
+        );
+    }
     make $past;
 }
 
@@ -260,7 +308,7 @@ method pblock($/) {
     if $<lambda> eq '<->' {
         $signature.set_rw_by_default();
     }
-    add_signature($block, $signature, 0);
+    add_signature($block, $signature);
     # We ought to find a way to avoid this, but it seems necessary for now.
     $block.loadinit.push(
         PAST::Op.new( :pirop<setprop__vPsP>,
@@ -294,6 +342,7 @@ method newpad($/) {
             :name('__CANDIDATE_LIST__'), :scope('lexical'), :isdecl(1)
         )
     ));
+    $new_block<IN_DECL> := $*IN_DECL;
     @BLOCK.unshift($new_block);
 }
 
@@ -304,7 +353,7 @@ method finishpad($/) {
     # undefs; for other blocks they initialize to their outer lexical.
 
     my $BLOCK := @BLOCK[0];
-    my $outer := $*IN_DECL ne 'routine' && $*IN_DECL ne 'method';
+    my $outer := $BLOCK<IN_DECL> ne 'routine' && $BLOCK<IN_DECL> ne 'method';
 
     for <$_ $/ $!> {
         # Generate the lexical variable except if...
@@ -323,9 +372,11 @@ method finishpad($/) {
 method statement_control:sym<if>($/) {
     my $count := +$<xblock> - 1;
     my $past := xblock_immediate( $<xblock>[$count].ast );
-    if $<else> {
-        $past.push( pblock_immediate( $<else>[0].ast ) );
-    }
+    # push the else block if any, otherwise 'if' returns C<Nil> (per S04)
+    $past.push( $<else> 
+                ?? pblock_immediate( $<else>[0].ast )
+                !!  PAST::Var.new(:name('Nil'), :namespace([]), :scope('package')) 
+    );
     # build if/then/elsif structure
     while $count > 0 {
         $count--;
@@ -363,10 +414,13 @@ method statement_control:sym<repeat>($/) {
 }
 
 method statement_control:sym<for>($/) {
-    my $past := xblock_immediate($<xblock>.ast);
-    $past.pasttype('for');
-    $past[0] := PAST::Op.new(:name('&flat'), $past[0]);
-    $past.arity($past[1].arity || 1);
+    my $xblock := $<xblock>.ast;
+    my $past := PAST::Op.new( 
+                    :pasttype<callmethod>, :name<map>, :node($/),
+                    PAST::Op.new( :name<&flat>, $xblock[0] ),
+                    block_closure($xblock[1], 'Block', 0)
+    );
+    $past := PAST::Op.new( :name<&eager>, $past, :node($/) );
     make $past;
 }
 
@@ -442,7 +496,18 @@ sub import($/) {
 
 method statement_control:sym<use>($/) {
     my $past := PAST::Stmts.new( :node($/) );
-    if $<module_name> {
+    if $<version> {
+        my $i := -1;
+        for $<version><vnum> {
+            ++$i;
+            if $_ ne '*' && $_ < @MAX_PERL_VERSION[$i] {
+                last;
+            } elsif $_ > @MAX_PERL_VERSION[$i] {
+                my $mpv := pir::join('.', @MAX_PERL_VERSION);
+                $/.CURSOR.panic("Perl $<version> required--this is only v$mpv")
+            }
+        }
+    } elsif $<module_name> {
         if ~$<module_name> eq 'fatal' {
             declare_variable($/, PAST::Stmts.new(), '$', '*', 'FATAL', 0);
             $past := PAST::Op.new(
@@ -468,13 +533,35 @@ method statement_control:sym<use>($/) {
             $*SETTING_MODE := 1;
         }
         elsif ~$<module_name> eq 'FORBID_PIR' {
-            $*FORBID_PIR := 1;
+            $FORBID_PIR := 1;
+        }
+        elsif ~$<module_name> eq 'Devel::Trace' {
+            $STATEMENT_PRINT := 1;
         }
         else {
             need($<module_name>);
             import($/);
         }
     }
+    make $past;
+}
+
+method statement_control:sym<require>($/) {
+    if $<module_name> && $<EXPR> {
+        $/.CURSOR.panic("require with argument list not yet implemented");
+    }
+    my $name_past := $<module_name>
+                    ?? PAST::Val.new(:value($<module_name><longname><name>.Str))
+                    !! $<EXPR>[0].ast;
+    my @module_loader := Perl6::Grammar::parse_name('Perl6::Module::Loader');
+    my $past := PAST::Op.new(
+        :node($/),
+        :pasttype('callmethod'),
+        :name('need'),
+        PAST::Var.new( :name(@module_loader.pop),
+                       :namespace(@module_loader), :scope('package') ),
+        $name_past
+    );
     make $past;
 }
 
@@ -530,37 +617,10 @@ method statement_control:sym<CONTROL>($/) {
     make PAST::Stmts.new(:node($/));
 }
 
-method statement_prefix:sym<BEGIN>($/) {
-    # BEGIN is kinda tricky. We actually need to run the code in it with
-    # immediate effect, and then have the BEGIN block evaluate to what
-    # was produced at runtime. But if we're in a pre-compiled module, we
-    # need to run the lot. Thus we keep a "already computed BEGIN values"
-    # hash and don't re-run if the value is in that. Of course, we still
-    # don't handle looking at things in outer lexical scopes here.
-    our %BEGINDONE;
-    our $?RAKUDO_HLL;
-    my $past := $<blorst>.ast;
-    $past.blocktype('declaration');
-    $past := PAST::Block.new(
-        :hll($?RAKUDO_HLL),
-        PAST::Op.new( :pasttype('call'), :name('!YOU_ARE_HERE'), $past )
-    );
-    my $compiled := PAST::Compiler.compile($past);
-    my $begin_id := $past.unique('BEGINDONE_');
-    %BEGINDONE{$begin_id} := $compiled();
-    @BLOCK[0].loadinit.push(PAST::Op.new(
-        :pasttype('call'), :name('!begin_unless_begun'),
-        $begin_id, $past
-    ));
-    make PAST::Var.new( :scope('keyed'),
-        PAST::Var.new( :name('%BEGINDONE'), :namespace(pir::split('::', 'Perl6::Actions')), :scope('package') ),
-        PAST::Val.new( :value($begin_id) )
-    );
-}
-
-method statement_prefix:sym<CHECK>($/) { add_phaser($/, 'CHECK'); }
-method statement_prefix:sym<INIT>($/)  { add_phaser($/, 'INIT'); }
-method statement_prefix:sym<END>($/)   { add_phaser($/, 'END'); }
+method statement_prefix:sym<BEGIN>($/) { self.add_phaser($/, $<blorst>.ast, 'BEGIN'); }
+method statement_prefix:sym<CHECK>($/) { self.add_phaser($/, $<blorst>.ast, 'CHECK'); }
+method statement_prefix:sym<INIT>($/)  { self.add_phaser($/, $<blorst>.ast, 'INIT'); }
+method statement_prefix:sym<END>($/)   { self.add_phaser($/, $<blorst>.ast, 'END'); }
 
 method statement_prefix:sym<do>($/) {
     my $past := $<blorst>.ast;
@@ -569,8 +629,7 @@ method statement_prefix:sym<do>($/) {
 }
 
 method statement_prefix:sym<gather>($/) {
-    my $past := $<blorst>.ast;
-    $past.blocktype('declaration');
+    my $past := block_closure($<blorst>.ast);
     make PAST::Op.new( :pasttype('call'), :name('!GATHER'), $past );
 }
 
@@ -579,7 +638,7 @@ method statement_prefix:sym<sink>($/) {
     $blast.blocktype('immediate');
     make PAST::Stmts.new(
         PAST::Op.new( :name('&eager'), $blast ),
-        PAST::Op.new( :name('&Nil') ),
+        PAST::Var.new( :name('Nil'), :namespace([]), :scope('package')),
         :node($/)
     );
 }
@@ -614,12 +673,38 @@ method blorst($/) {
     make $block;
 }
 
-sub add_phaser($/, $bank) {
-    @BLOCK[0].loadinit.push(
-        PAST::Op.new( :pasttype('call'), :name('!add_phaser'),
-                      $bank, $<blorst>.ast, :node($/))
+method add_phaser($/, $blorst, $bank) {
+    my $subid := $blorst.subid();
+
+    # We always emit code to the add and fire the phaser.
+    my $add_phaser := PAST::Op.new(
+        :pasttype('call'), :name('!add_phaser'),
+        $bank, PAST::Val.new( :value($blorst) ), :node($/)
     );
-    make PAST::Stmts.new(:node($/));
+    @BLOCK[0].loadinit.push($add_phaser);
+    @BLOCK[0][0].push($blorst);
+
+    # If it's a BEGIN phaser, we also need it to run asap.
+    if $bank eq 'BEGIN' {
+        # add code to immediately fire the BEGIN phaser
+        my $fire := PAST::Op.new( :pasttype('call'), :name('!fire_phasers'), 'BEGIN' );
+        @BLOCK[0].loadinit.push($fire);
+
+        # and execute the phaser immediately in the current UNIT_OUTER
+        our $?RAKUDO_HLL;
+        $blorst.hll($?RAKUDO_HLL);
+        my $compiled := PAST::Compiler.compile($blorst);
+        Q:PIR {
+            $P0 = find_lex '$compiled'
+            $P0 = $P0[0]
+            '!UNIT_OUTER'($P0)
+            '!add_phaser'('BEGIN', $P0)
+            '!fire_phasers'('BEGIN')
+        }
+    }
+
+    # Need to get return value of phaser at "runtime".
+    make PAST::Op.new( :pasttype('call'), :name('!get_phaser_result'), $subid );
 }
 
 # Statement modifiers
@@ -659,6 +744,7 @@ method term:sym<routine_declarator>($/) { make $<routine_declarator>.ast; }
 method term:sym<multi_declarator>($/)   { make $<multi_declarator>.ast; }
 method term:sym<regex_declarator>($/)   { make $<regex_declarator>.ast; }
 method term:sym<type_declarator>($/)    { make $<type_declarator>.ast; }
+method term:sym<circumfix>($/)          { make $<circumfix>.ast; }
 method term:sym<statement_prefix>($/)   { make $<statement_prefix>.ast; }
 method term:sym<lambda>($/)             { make block_closure($<pblock>.ast, 'Block', 0); }
 method term:sym<sigterm>($/)            { make $<sigterm>.ast; }
@@ -671,12 +757,12 @@ method term:sym<YOU_ARE_HERE>($/) {
                 '$P0 = getinterp',
                 '$P0 = $P0["context"]',
                 '$P0 = getattribute $P0, "outer_ctx"',
+                '$P1 = getattribute $P0, "current_sub"',
+                '%0."set_outer"($P1)',
                 '%0."set_outer_ctx"($P0)',
-                '%r = %0(%1)'
+                '%r = %0'
             ),
-            PAST::Var.new( :name('mainline'), :scope('parameter') ),
-            PAST::Var.new( :name('$MAIN'), :scope('parameter'),
-                           :viviself( PAST::Val.new( :value(0) ) ) )
+            PAST::Var.new( :name('mainline'), :scope('parameter') )
         )
     );
     @BLOCK[0][0].push(PAST::Var.new(
@@ -814,8 +900,15 @@ sub make_variable($/, $name) {
             $past.viviself( sigiltype( $<sigil> ) );
             $past.unshift(PAST::Var.new( :name('self'), :scope('lexical') ));
         }
-        elsif $<sigil> eq '&' && !@name {
-            $past := PAST::Op.new(:pirop('find_sub_not_null__Ps'), $past.name);
+        elsif $<sigil> eq '&' {
+            if !@name {
+                $past := PAST::Op.new(:pirop('find_sub_not_null__Ps'), $past.name);
+            }
+            else {
+                $past.viviself(PAST::Var.new(
+                    :namespace(''), :name('Code'), :scope('package')
+                ));
+            }
         }
     }
     $past
@@ -856,7 +949,9 @@ method package_def($/, $key?) {
         if $<def_module_name> {
             my $name := ~$<def_module_name>[0]<longname><name>;
             if $name ne '::' {
-                $/.CURSOR.add_name($name, 1);
+                if $*SCOPE ne 'anon' {
+                    $/.CURSOR.add_name($name, 1);
+                }
                 $package.name($name);
             }
             if $<def_module_name>[0]<signature> {
@@ -1104,7 +1199,7 @@ method routine_def($/) {
             pir::defined__IP($block<placeholder_sig>) ?? $block<placeholder_sig> !!
             Perl6::Compiler::Signature.new();
     $signature.set_default_parameter_type('Any');
-    add_signature($block, $signature, 1);
+    add_signature($block, $signature);
     if $<trait> {
         emit_routine_traits($block, $<trait>, 'Sub');
     }
@@ -1245,7 +1340,7 @@ method method_def($/) {
     }
 
     # Add signature to block.
-    add_signature($past, $sig, 1);
+    add_signature($past, $sig);
     $past[0].unshift(PAST::Var.new( :name('self'), :scope('lexical'), :isdecl(1), :viviself(sigiltype('$')) ));
     $past.symbol('self', :scope('lexical'));
 
@@ -1455,7 +1550,7 @@ method regex_def($/, $key?) {
         $sig.set_default_parameter_type('Any');
         $past[0].unshift(PAST::Var.new( :name('self'), :scope('lexical'), :isdecl(1), :viviself(sigiltype('$')) ));
         $past.symbol('self', :scope('lexical'));
-        add_signature($past, $sig, 1);
+        add_signature($past, $sig);
         $past.name($name);
         $past.blocktype("declaration");
         
@@ -1492,11 +1587,16 @@ method type_declarator:sym<enum>($/) {
         my $compiled := PAST::Compiler.compile(PAST::Block.new(
             :hll($?RAKUDO_HLL), $value_ast
         ));
-        my $result := (pir::find_sub_not_null__ps('!YOU_ARE_HERE'))($compiled);
+        my $result := (pir::find_sub_not_null__ps('!YOU_ARE_HERE'))($compiled)();
         
         # Only support our-scoped so far.
         unless $*SCOPE eq '' || $*SCOPE eq 'our' {
             $/.CURSOR.panic("Do not yet support $*SCOPE scoped enums");
+        }
+
+        if $/.CURSOR.is_name(~$<name>[0]) {
+            $/.CURSOR.panic("Illegal redeclaration of symbol '"
+                             ~ $<name>[0] ~ "'");
         }
         
         # Install names.
@@ -1509,7 +1609,7 @@ method type_declarator:sym<enum>($/) {
         # Emit code to set up named enum.
         @PACKAGE[0].block.loadinit.push(PAST::Op.new(
             :pasttype('call'),
-            :name('!setup_named_enum'),
+            :name('&SETUP_NAMED_ENUM'),
             ~$<name>[0],
             $value_ast
         ));
@@ -1527,7 +1627,7 @@ method type_declarator:sym<subset>($/) {
     my $of_trait := has_compiler_trait($<trait>, '&trait_mod:<of>');
     my $refinee := $of_trait ??
         $of_trait[0] !!
-        PAST::Var.new( :name('Any'), :namespace(Nil), :scope('package') );
+        PAST::Var.new( :name('Any'), :namespace([]), :scope('package') );
 
     # Construct subset and install it in the right place.
     my $cons_past := PAST::Op.new(
@@ -1568,6 +1668,10 @@ method type_declarator:sym<subset>($/) {
         }
         make $cons_past;
     }
+}
+
+method type_declarator:sym<constant>($/) {
+    $/.CURSOR.panic('Constant type declarator not yet implemented');
 }
 
 method capterm($/) {
@@ -1930,8 +2034,12 @@ method term:sym<self>($/) {
     make PAST::Var.new( :name('self'), :node($/) );
 }
 
-method term:sym<Nil>($/) {
-    make PAST::Op.new(:name('&Nil'), :node($/) );
+method term:sym<now>($/) {
+    make PAST::Op.new( :name('&term:<now>'), :node($/) );
+}
+
+method term:sym<time>($/) {
+    make PAST::Op.new( :name('&term:<time>'), :node($/) );
 }
 
 method term:sym<rand>($/) {
@@ -2001,7 +2109,7 @@ method term:sym<name>($/) {
 }
 
 method term:sym<pir::op>($/) {
-    if $*FORBID_PIR {
+    if $FORBID_PIR {
         pir::die("pir::op forbidden in safe mode\n");
     }
     my $past := $<args> ?? $<args>[0].ast !! PAST::Op.new( :node($/) );
@@ -2087,7 +2195,7 @@ method arglist($/) {
 }
 
 sub handle_named_parameter($arg) {
-    if $arg ~~ PAST::Node && $arg.returns() eq 'Pair' {
+    if $arg ~~ PAST::Op && $arg.returns() eq 'Pair' {
         my $result := $arg[2];
         $result.named(~$arg[1].value());
         $result<before_promotion> := $arg;
@@ -2100,7 +2208,23 @@ sub handle_named_parameter($arg) {
 
 method term:sym<value>($/) { make $<value>.ast; }
 
-method circumfix:sym<( )>($/) { make $<semilist>.ast; }
+method circumfix:sym<( )>($/) {
+    my $past := $<semilist>.ast;
+    my $size := +$past.list;
+    if $size == 0 {
+        $past := PAST::Op.new( :name('&infix:<,>') );
+    }
+    else {
+        my $last := $past[ $size - 1 ];
+        if pir::defined($last.returns) {
+            $past.returns($last.returns);
+        }
+        if pir::defined($last.arity) {
+            $past.arity($last.arity);
+        }
+    }
+    make $past;
+}
 
 method circumfix:sym<ang>($/) { make $<quote_EXPR>.ast; }
 
@@ -2168,8 +2292,21 @@ method EXPR($/, $key?) {
     unless $key { return 0; }
     if $/<drop> { make PAST::Stmts.new(); return 0; }
     my $past := $/.ast // $<OPER>.ast;
-    if !$past && $<infix><sym> eq '.=' {
+    my $sym := ~$<infix><sym>;
+    if !$past && $sym eq '.=' {
         make make_dot_equals($/[0].ast, $/[1].ast);
+        return 1;
+    }
+    elsif $sym eq '==>' || $sym eq '<==' || $sym eq '==>>' || $sym eq '<<==' {
+        make make_feed($/);
+        return 1;
+    }
+    elsif $sym eq '~~' {
+        make make_smartmatch($/, 0);
+        return 1;
+    }
+    elsif $sym eq '!~~' {
+        make make_smartmatch($/, 1);
         return 1;
     }
     unless $past {
@@ -2191,17 +2328,124 @@ method EXPR($/, $key?) {
         my $inv := $/[0].ast;
         $past.unshift(
             PAST::Op.ACCEPTS($past) && $past.pasttype eq 'callmethod'
-            ?? PAST::Op.new( :pirop('deref_unless_object PP'), $inv, :returns($inv.returns) )
+            ?? PAST::Op.new( :pirop('deref_unless_object PP'), $inv, :returns($inv.returns), :arity($inv.arity) )
             !! $inv
         );
     }
     else {
         for $/.list { if $_.ast { $past.push($_.ast); } }
     }
+    if $sym eq '^^' || $sym eq 'xor' {
+        $past := PAST::Op.new(
+            :pasttype<call>, :name('!Undef_to_False'), $past
+        );
+    }
     if $key eq 'PREFIX' || $key eq 'INFIX' || $key eq 'POSTFIX' {
-        $past := whatever_curry($past, $key eq 'INFIX' ?? 2 !! 1);
+        $past := whatever_curry($/, $past, $key eq 'INFIX' ?? 2 !! 1);
     }
     make $past;
+}
+
+sub make_feed($/) {
+    # Assemble into list of AST of each step in the pipeline.
+    my @stages;
+    if $/<infix><sym> eq '==>' {
+        for @($/) { @stages.push($_.ast); }
+    }
+    elsif $/<infix><sym> eq '<==' {
+        for @($/) { @stages.unshift($_.ast); }
+    }
+    else {
+        $/.CURSOR.panic('Sorry, the ' ~ $/<infix> ~ ' feed operator is not yet implemented');
+    }
+    
+    # Check what's in each stage and make a chain of blocks
+    # that call each other. They'll return lazy things, which
+    # will be passed in as var-arg parts to other things. The
+    # first thing is just considered the result.
+    my $result := @stages.shift;
+    for @stages {
+        # Wrap current result in a block, so it's thunked and can be
+        # called at the right point.
+        $result := PAST::Block.new( $result );
+
+        # Check what we have. XXX Real first step should be looking
+        # for @(*) since if we find that it overrides all other things.
+        # But that's todo...soon. :-)
+        if $_ ~~ PAST::Op && $_.pasttype eq 'call' {
+            # It's a call. Stick a call to the current supplier in
+            # as its last argument.
+            $_.push(PAST::Op.new( :pasttype('call'), $result ));
+        }
+        elsif $_ ~~ PAST::Var {
+            # It's a variable. We need code that gets the results, pushes
+            # them onto the variable and then returns them (since this
+            # could well be a tap.
+            $_ := PAST::Stmts.new(
+                PAST::Op.new(
+                    :pasttype('bind'),
+                    PAST::Var.new( :scope('register'), :name('tmp'), :isdecl(1) ),
+                    PAST::Op.new( :pasttype('call'), $result )
+                ),
+                PAST::Op.new(
+                    :pasttype('callmethod'), :name('push'),
+                    $_,
+                    PAST::Var.new( :scope('register'), :name('tmp') )
+                ),
+                PAST::Var.new( :scope('register'), :name('tmp') )
+            );
+        }
+        else {
+            $/.CURSOR.panic('Sorry, do not know how to handle this case of a feed operator yet.');
+        }
+        $result := $_;
+    }
+
+    return $result;
+}
+
+sub make_smartmatch($/, $negated) {
+    my $lhs := $/[0].ast;
+    my $rhs := $/[1].ast;
+    my $old_topic_var := $lhs.unique('old_topic');
+    my $result_var := $lhs.unique('sm_result');
+    PAST::Op.new(
+        :pasttype('stmts'),
+
+        # Stash original $_.
+        PAST::Op.new( :pasttype('bind'),
+            PAST::Var.new( :name($old_topic_var), :scope('register'), :isdecl(1) ),
+            PAST::Var.new( :name('$_'), :scope('lexical') )
+        ),
+
+        # Evaluate LHS and bind it to $_.
+        PAST::Op.new( :pasttype('bind'),
+            PAST::Var.new( :name('$_'), :scope('lexical') ),
+            $lhs
+        ),
+
+        # Evaluate RHS and call ACCEPTS on it, passing in $_. Bind the
+        # return value to a result variable.
+        PAST::Op.new( :pasttype('bind'),
+            PAST::Var.new( :name($result_var), :scope('lexical'), :isdecl(1) ),
+            PAST::Op.new( :pasttype('call'), :name('&coerce-smartmatch-result'),
+                PAST::Op.new( :pasttype('callmethod'), :name('ACCEPTS'),
+                    $rhs,
+                    PAST::Var.new( :name('$_'), :scope('lexical') )
+                ),
+                $negated
+            )
+        ),
+
+        # Re-instate original $_.
+        PAST::Op.new( :pasttype('bind'),
+            PAST::Var.new( :name('$_'), :scope('lexical') ),
+            PAST::Var.new( :name($old_topic_var), :scope('register') )
+        ),
+
+        # And finally evaluate to the smart-match result.
+        PAST::Var.new( :name($result_var), :scope('lexical') )
+    );
 }
 
 method prefixish($/) {
@@ -2293,7 +2537,8 @@ method prefix_circumfix_meta_operator:sym<reduce>($/) {
                 PAST::Op.new( :pirop('find_sub_not_null__Ps'), $base_op ),
                 PAST::Val.new( :named('triangle'), :value($<triangle> ?? 1 !! 0) ),
                 PAST::Val.new( :named('chaining'), :value($<op><OPER><O><prec> eq 'm=') ),
-                PAST::Val.new( :named('right-assoc'), :value($<op><OPER><O><assoc> eq 'right') )
+                PAST::Val.new( :named('right-assoc'), :value($<op><OPER><O><assoc> eq 'right') ),
+                PAST::Val.new( :named('xor'), :value($<op><OPER><O><pasttype> eq 'xor') )
             )
         ));
         %*METAOPGEN{$opsub} := 1;
@@ -2312,7 +2557,7 @@ method infix_circumfix_meta_operator:sym<« »>($/) {
 sub make_hyperop($/) {
     my $opsub := '&infix:<' ~ ~$/ ~ '>';
     unless %*METAOPGEN{$opsub} {
-        my $base_op := '&infix:<' ~ $<infixish><OPER>.Str ~ '>';
+        my $base_op := '&infix:<' ~ $<infixish>.Str ~ '>';
         my $dwim_lhs := $<opening> eq '<<' || $<opening> eq '«';
         my $dwim_rhs := $<closing> eq '>>' || $<closing> eq '»';
         $*UNITPAST.loadinit.push(PAST::Op.new(
@@ -2335,8 +2580,13 @@ method postfixish($/) {
     if $<postfix_prefix_meta_operator> {
         my $past := $<OPER>.ast;
         if $past && $past.isa(PAST::Op) && $past.pasttype() eq 'call' {
-            $past.unshift($past.name());
-            $past.name('!dispatch_dispatcher_parallel');
+            if ($past.name() eq '') {
+                $past.name('!dispatch_invocation_parallel');
+            }
+            else {
+                $past.unshift($past.name());
+                $past.name('!dispatch_dispatcher_parallel');
+            }
         }
         elsif $past && $past.isa(PAST::Op) && $past.pasttype() eq 'callmethod' {
             $past.unshift($past.name());
@@ -2501,13 +2751,90 @@ method typename($/) {
     make $past;
 }
 
+our %SUBST_ALLOWED_ADVERBS;
+our %SHARED_ALLOWED_ADVERBS;
+our %MATCH_ALLOWED_ADVERBS;
+INIT {
+    my $mods := 'i ignorecase s sigspace r ratchet';
+    for pir::split__PSS(' ', $mods) {
+        %SHARED_ALLOWED_ADVERBS{$_} := 1;
+    }
+
+    $mods := 'g global ii samecase x c continue p pos nth th st nd rd';
+    for pir::split__PSS(' ', $mods) {
+        %SUBST_ALLOWED_ADVERBS{$_} := 1;
+    }
+
+    # TODO: add g global ov overlap  once they actually work
+    $mods := 'x c continue p pos nth th st nd rd';
+    for pir::split__PSS(' ', $mods) {
+        %MATCH_ALLOWED_ADVERBS{$_} := 1;
+    }
+}
+
+
+method quotepair($/) {
+    unless $*value ~~ PAST::Node {
+        if ($*key eq 'c' || $*key eq 'continue'
+        || $*key eq 'p' || $*key eq 'pos') && $*value == 1 {
+            $*value := PAST::Op.new(
+                :node($/),
+                :pasttype<if>,
+                PAST::Var.new(:name('$/'), :scope('lexical')),
+                PAST::Op.new(:pasttype('callmethod'),
+                    PAST::Var.new(:name('$/'), :scope<lexical>),
+                    :name<to>
+                ),
+                PAST::Val.new(:value(0)),
+            );
+        } else {
+            $*value := PAST::Val.new( :value($*value) );
+        }
+    }
+    $*value.named(~$*key);
+    make $*value;
+}
+
+method setup_quotepairs($/) {
+    my %h;
+    for @*REGEX_ADVERBS {
+        my $key := $_.ast.named;
+        my $value := $_.ast;
+        if $value ~~ PAST::Val {
+            $value := $value.value;
+        } else {
+            if %SHARED_ALLOWED_ADVERBS{$key} {
+                $/.CURSOR.panic('Value of adverb :' ~ $key ~ ' must be known at compile time');
+            }
+        }
+        if $key eq 'samecase' || $key eq 'ii' {
+            %h{'i'} := 1;
+        }
+        %h{$key} := $value;
+    }
+
+    my @MODIFIERS := Q:PIR {
+        %r = get_hll_global ['Regex';'P6Regex';'Actions'], '@MODIFIERS'
+    };
+    @MODIFIERS.unshift(%h);
+}
+
+method cleanup_modifiers($/) {
+    my @MODIFIERS := Q:PIR {
+        %r = get_hll_global ['Regex';'P6Regex';'Actions'], '@MODIFIERS'
+    };
+    @MODIFIERS.shift();
+
+}
+
 method quote:sym<apos>($/) { make $<quote_EXPR>.ast; }
 method quote:sym<dblq>($/) { make $<quote_EXPR>.ast; }
 method quote:sym<qq>($/)   { make $<quote_EXPR>.ast; }
+method quote:sym<qw>($/)   { make $<quote_EXPR>.ast; }
 method quote:sym<q>($/)    { make $<quote_EXPR>.ast; }
 method quote:sym<Q>($/)    { make $<quote_EXPR>.ast; }
 method quote:sym<Q:PIR>($/) {
-    if $*FORBID_PIR {
+    if $FORBID_PIR {
         pir::die("Q:PIR forbidden in safe mode\n");
     }
     make PAST::Op.new( :inline( $<quote_EXPR>.ast.value ),
@@ -2529,12 +2856,41 @@ method quote:sym</ />($/) {
     make block_closure($past, 'Regex', 0);
 }
 method quote:sym<rx>($/) {
+
+    self.handle_and_check_adverbs($/, %SHARED_ALLOWED_ADVERBS, 'rx');
     my $past := Regex::P6Regex::Actions::buildsub($<p6regex>.ast);
     make block_closure($past, 'Regex', 0);
 }
 method quote:sym<m>($/) {
-    my $past := Regex::P6Regex::Actions::buildsub($<p6regex>.ast);
-    make block_closure($past, 'Regex', 0);
+    $regex := Regex::P6Regex::Actions::buildsub($<p6regex>.ast);
+    my $regex := block_closure($regex, 'Regex', 0);
+
+    my $past := PAST::Op.new(
+        :node($/),
+        :pasttype('callmethod'), :name('match'),
+        PAST::Var.new( :name('$_'), :scope('lexical') ),
+        $regex
+    );
+    self.handle_and_check_adverbs($/, %MATCH_ALLOWED_ADVERBS, 'm', $past);
+    $past := PAST::Op.new(
+        :node($/),
+        :pasttype('call'), :name('&infix:<:=>'),
+        PAST::Var.new(:name('$/'), :scope('lexical')),
+        $past
+    );
+
+    make $past;
+}
+
+method handle_and_check_adverbs($/, %adverbs, $what, $past?) {
+    for $<quotepair> {
+        unless %SHARED_ALLOWED_ADVERBS{$_.ast.named} || %adverbs{$_.ast.named} {
+            $/.CURSOR.panic("Adverb '" ~ $_.ast.named ~ "' not allowed on " ~ $what);
+        }
+        if $past {
+            $past.push($_.ast);
+        }
+    }
 }
 
 method quote:sym<s>($/) {
@@ -2551,14 +2907,27 @@ method quote:sym<s>($/) {
     );
     my $closure := block_closure($closure_ast, 'Block', 0);
 
-    # Make a Substitution.
-    $regex.named('matcher');
-    $closure.named('replacer');
-    make PAST::Op.new(
-        :pasttype('callmethod'), :name('new'),
-        PAST::Var.new( :name('Substitution'), :scope('package') ),
+    # make $_ = $_.subst(...)
+    my $past := PAST::Op.new(
+        :node($/),
+        :pasttype('callmethod'), :name('subst'),
+        PAST::Var.new( :name('$_'), :scope('lexical') ),
         $regex, $closure
     );
+    self.handle_and_check_adverbs($/, %SUBST_ALLOWED_ADVERBS, 'substitution', $past);
+    if $/[0] {
+        pir::push__vPP($past, PAST::Val.new(:named('samespace'), :value(1)));
+    }
+
+    $past := PAST::Op.new(
+        :node($/),
+        :pasttype('call'),
+        :name('&infix:<=>'),
+        PAST::Var.new(:name('$_'), :scope('lexical')),
+        $past
+    );
+
+    make $past;
 }
 
 method quote_escape:sym<$>($/) {
@@ -2719,8 +3088,8 @@ class Perl6::RegexActions is Regex::P6Regex::Actions {
 }
 
 # Takes a block and adds a signature to it, as well as code to bind the call
-# capture against the signature. Returns the name of the signature setup block.
-sub add_signature($block, $sig_obj, $lazy) {
+# capture against the signature.  Returns the modified block.
+sub add_signature($block, $sig_obj) {
     # Set arity.
     $block.arity($sig_obj.arity);
 
@@ -2744,6 +3113,7 @@ sub add_signature($block, $sig_obj, $lazy) {
     my $lazysig := PAST::Block.new(:blocktype<declaration>, $sig_obj.ast(1));
     $block[0].push($lazysig);
     $block<lazysig> := PAST::Val.new( :value($lazysig) );
+    $block;
 }
 
 # Makes a lazy signature building block.
@@ -2829,6 +3199,23 @@ sub block_closure($block, $type = 'Block', $multiness?) {
     $past;
 }
 
+# Returns the (dynamic) closure for a block, taking a reference
+# to it rather than holding it directly.
+sub block_ref_closure($block, $type = 'Block', $multiness?) {
+    my @name := Perl6::Grammar::parse_name($type);
+    my $past := PAST::Op.new(
+        :pasttype('callmethod'),
+        :name('!get_closure'),
+        PAST::Val.new( :value($block) ),
+        PAST::Var.new( :name(@name.pop), :namespace(@name), :scope('package') )
+    );
+    $past.push($block<lazysig>) if pir::defined($block<lazysig>);
+    $past.push($multiness) if pir::defined($multiness);
+    $past<block_past> := $block;
+    $past<block_type> := $type;
+    $past;
+}
+
 # Wraps a sub up in a block type.
 sub create_code_object($block, $type, $multiness) {
     my @name := Perl6::Grammar::parse_name($type);
@@ -2842,6 +3229,8 @@ sub create_code_object($block, $type, $multiness) {
     $past.push($block<lazysig>) if pir::defined($block<lazysig>);
     $past<past_block> := $block;
     $past<block_class> := $type;
+    $past.returns($type);
+    $past.arity($block.arity);
     $past
 }
 
@@ -3079,9 +3468,8 @@ sub push_block_handler($/, $block, $handler) {
 
 # Makes the closure for the RHS of has $.answer = 42.
 sub make_attr_init_closure($init_value) {
-    # Need to not just build the closure, but new_closure it; otherwise, we
-    # run into trouble if our initialization value involves a parameter from
-    # a parametric role.
+    # Build the closure and install the block in the current lexical
+    # scope we're in, so it gets its outer right.
     my $block := PAST::Block.new(
         :blocktype('declaration'),
         PAST::Stmts.new( ),
@@ -3092,8 +3480,11 @@ sub make_attr_init_closure($init_value) {
     my $sig := Perl6::Compiler::Signature.new(
         Perl6::Compiler::Parameter.new(:var_name('$_')));
     $sig.add_invocant();
-    add_signature($block, $sig, 1);
-    create_code_object($block, 'Method', 0);
+    add_signature($block, $sig);
+    @BLOCK[0].push($block);
+
+    # Return a code object using a reference to the block.
+    block_ref_closure($block, 'Method', 0);
 }
 
 # Looks through the lexpads and sees if we recognize the symbol as a lexical.
@@ -3165,50 +3556,105 @@ sub capture_or_parcel($args, $name) {
 # to curry for now; in the future, we will inspect the multi signatures
 # of the op to decide, or likely store things in this hash from that
 # introspection and keep it as a quick cache.
+
+# not_curried = 1 means do not curry Whatever, but do curry WhateverCode
+# not_curried = 2 means do not curry either.
+
 our %not_curried;
 INIT {
-    %not_curried{'&infix:<...>'}  := 1;
+    %not_curried{'&infix:<...>'}  := 2;
+    %not_curried{'&infix:<...^>'} := 2;
     %not_curried{'&infix:<..>'}   := 1;
     %not_curried{'&infix:<..^>'}  := 1;
     %not_curried{'&infix:<^..>'}  := 1;
     %not_curried{'&infix:<^..^>'} := 1;
-    %not_curried{'&prefix:<^>'}   := 1;
+    %not_curried{'&prefix:<^>'}   := 2;
     %not_curried{'&infix:<xx>'}   := 1;
-    %not_curried{'&infix:<~~>'}   := 1;
-    %not_curried{'&infix:<=>'}    := 1;
-    %not_curried{'&infix:<:=>'}   := 1;
+    %not_curried{'&infix:<~~>'}   := 2;
+    %not_curried{'&infix:<=>'}    := 2;
+    %not_curried{'&infix:<:=>'}   := 2;
+    %not_curried{'WHAT'}          := 2;
+    %not_curried{'HOW'}           := 2;
+    %not_curried{'WHO'}           := 2;
+    %not_curried{'WHERE'}         := 2;
 }
-sub whatever_curry($past, $upto_arity) {
-    if $past.isa(PAST::Op) && !%not_curried{$past.name} {
-        if $upto_arity == 2 && $past[0] ~~ PAST::Op && $past[0].returns eq 'Whatever'
-                            && $past[1] ~~ PAST::Op && $past[1].returns eq 'Whatever' {
-            # Curry left and right, two args.
-            $past.shift; $past.shift;
-            $past.push(PAST::Var.new( :name('$x'), :scope('lexical') ));
-            $past.push(PAST::Var.new( :name('$y'), :scope('lexical') ));
-            my $sig := Perl6::Compiler::Signature.new(
-                Perl6::Compiler::Parameter.new(:var_name('$x')),
-                Perl6::Compiler::Parameter.new(:var_name('$y')));
-            $past := make_block_from($sig, $past, 'WhateverCode');
-        }
-        elsif $upto_arity == 2 && $past[1] ~~ PAST::Op && $past[1].returns eq 'Whatever' {
-            # Curry right arg.
-            $past.pop;
-            $past.push(PAST::Var.new( :name('$y'), :scope('lexical') ));
-            my $sig := Perl6::Compiler::Signature.new(
-                Perl6::Compiler::Parameter.new(:var_name('$y')));
-            $past := make_block_from($sig, $past, 'WhateverCode');
-        }
-        elsif $upto_arity >= 1 && $past[0] ~~ PAST::Op && $past[0].returns eq 'Whatever' {
-            # Curry left (or for unary, only) arg.
-            $past.shift;
-            $past.unshift(PAST::Var.new( :name('$x'), :scope('lexical') ));
-            my $sig := Perl6::Compiler::Signature.new(
-                Perl6::Compiler::Parameter.new(:var_name('$x')));
-            $past := make_block_from($sig, $past, 'WhateverCode');
+sub whatever_curry($/, $past, $upto_arity) {
+    if $past.isa(PAST::Op) && %not_curried{$past.name} != 2
+                           && ($past<pasttype> ne 'call' || pir::index($past.name, '&infix:') == 0) {
+        if ($upto_arity >= 1 && (($past[0].returns eq 'Whatever' && !%not_curried{$past.name})
+                                 || $past[0].returns eq 'WhateverCode'))
+        || ($upto_arity == 2 && (($past[1].returns eq 'Whatever' && !%not_curried{$past.name})
+                                 || $past[1].returns eq 'WhateverCode')) {
+
+            my $counter := 0;
+            my $sig := Perl6::Compiler::Signature.new();
+            my $left := $past.shift;
+            my $left_new;
+            my $right_new;
+
+            if $left.returns eq 'WhateverCode' {
+                $left_new := PAST::Op.new( :pasttype('call'), :node($/), $left);
+                my $left_arity := $left.arity;
+                while $counter < $left_arity {
+                    $counter++;
+                    $left_new.push(PAST::Var.new( :name('$x' ~ $counter), :scope('lexical') ));
+                    $sig.add_parameter(Perl6::Compiler::Parameter.new(:var_name('$x' ~ $counter)));
+                }
+            }
+            elsif $left.returns eq 'Whatever' {
+                $counter++;
+                $left_new := PAST::Var.new( :name('$x' ~ $counter), :scope('lexical') );
+                $sig.add_parameter(Perl6::Compiler::Parameter.new(:var_name('$x' ~ $counter)));
+            }
+            else {
+                $left_new := $left;
+            }
+
+            if $upto_arity == 2 {
+                my $right := $past.shift;
+
+                if $right.returns eq 'WhateverCode' {
+                    $right_new := PAST::Op.new( :pasttype('call'), :node($/), $right);
+                    # Next block is a bit weird, because $counter + $right.arity was
+                    # consistently failing.  So we create a new variable as a temporary
+                    # counter.
+                    my $right_arity := $right.arity;
+                    my $right_counter := 0;
+                    while $right_counter < $right_arity {
+                        $counter++;
+                        $right_counter++;
+                        $right_new.push(PAST::Var.new( :name('$x' ~ $counter), :scope('lexical') ));
+                        $sig.add_parameter(Perl6::Compiler::Parameter.new(:var_name('$x' ~ $counter)));
+                    }
+                }
+                elsif $right.returns eq 'Whatever' {
+                    $counter++;
+                    $right_new := PAST::Var.new( :name('$x' ~ $counter), :scope('lexical') );
+                    $sig.add_parameter(Perl6::Compiler::Parameter.new(:var_name('$x' ~ $counter)));
+                }
+                else {
+                    $right_new := $right;
+                }
+            }
+
+            if $upto_arity == 2 {
+                $past.unshift($right_new);
+            }
+            $past.unshift($left_new);
+            $past := block_closure(blockify($past, $sig), 'WhateverCode', 0);
+            $past.returns('WhateverCode');
+            $past.arity($sig.arity);
         }
     }
     $past
+}
+
+sub blockify($past, $sig) {
+    add_signature( PAST::Block.new( :blocktype('declaration'),
+                       PAST::Stmts.new( ),
+                       PAST::Stmts.new( $past )
+                   ),
+                   $sig);
 }
 
 # Helper for constructing a simple Perl 6 Block with the given signature
@@ -3220,7 +3666,7 @@ sub make_block_from($sig, $body, $type = 'Block') {
             $body
         )
     );
-    add_signature($past, $sig, 1);
+    add_signature($past, $sig);
     create_code_object($past, $type, 0);
 }
 

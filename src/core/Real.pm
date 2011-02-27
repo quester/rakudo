@@ -2,8 +2,8 @@ class Complex { ... }
 
 role Real does Numeric {
     method ACCEPTS($other) {
-        if self eq "NaN" {
-            (+$other).reals.grep("NaN").elems > 0;
+        if self.isNaN {
+            $other.isNaN;
         } else {
             $other == self;
         }
@@ -45,6 +45,10 @@ role Real does Numeric {
         (self);
     }
 
+    method isNaN() {
+        False;
+    }
+
     method abs(Real $x:) {
         $x < 0 ?? -$x !! $x;
     }
@@ -67,8 +71,7 @@ role Real does Numeric {
     }
 
     method sign(Real $x:) {
-        $x.notdef ?? Mu
-                    !! ($x ~~ NaN ?? NaN !! $x <=> 0);
+        $x.defined ?? ($x ~~ NaN ?? NaN !! $x <=> 0) !! Mu;
     }
 
     method floor(Real $x:) {
@@ -94,6 +97,10 @@ role Real does Numeric {
     method unpolar(Real $mag: Real $angle) {
         Complex.new($mag * $angle.cos(Radians),
                     $mag * $angle.sin(Radians));
+    }
+
+    method rand(Real $x:) {
+        $x.Bridge.rand;
     }
 
     method sin(Real $x: $base = Radians) {
@@ -199,8 +206,12 @@ role Real does Numeric {
 
 # Comparison operators
 
+multi sub infix:<cmp>(Real $a, Real $b) {
+    $a.Bridge cmp $b.Bridge;
+}
+
 multi sub infix:«<=>»(Real $a, Real $b) {
-    $a.Bridge <=> $b.Bridge;
+    $a.Bridge cmp $b.Bridge;
 }
 
 multi sub infix:«==»(Real $a, Real $b) {
@@ -263,4 +274,8 @@ multi sub infix:<**>(Real $a, Real $b) {
 # should automatically define an appropriate mod for you.
 our multi sub infix:<mod>(Real $a, Real $b) {
     $a - ($a div $b) * $b;
+}
+
+multi sub srand(Real $seed = time) {
+    pir::srand__0I($seed.Int);
 }

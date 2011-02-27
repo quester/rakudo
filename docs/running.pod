@@ -8,20 +8,22 @@ perl6 - Rakudo Perl 6 Compiler
 
 =head1 DESCRIPTION
 
-Compiles C<[programfile]> or the program given by the C<-e> option, and
-by default also executes the compiled code.
+With no arguments, enters a REPL. With a C<[programfile]> or the C<-e>
+option, compiles the given program and by default also executes the
+compiled code.
 
   -c                   check syntax only (runs BEGIN and CHECK blocks)
   -e program           one line of program
   -h, --help           display this help text
   --target=[stage]     specify compilation stage to emit
-  -t, --trace=[flags]  enable trace flags
+  -t, --trace=[flags]  enable trace flags, see 'parrot --help-debug'
   --encoding=[mode]    specify string encoding mode
   -o, --output=[name]  specify name of output file
   -v, --version        display version information
   --stagestats         display time spent in the compilation stages
+  --ll-backtrace       display a low level backtrace on errors
 
-Note that only boolean single-letter options may be bundled 
+Note that only boolean single-letter options may be bundled
 
 Supported stages for --target are:
 

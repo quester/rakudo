@@ -180,7 +180,9 @@ token def_module_name {
     ]?
 }
 
-token nofun { <![ ( \\ ' \- ]> » }
+token end_keyword {
+    <!before <[ \( \\ ' \- ]> || \h* '=>'> »
+}
 token spacey { <?before <[ \s \# ]> > }
 
 token ENDSTMT {
@@ -365,13 +367,13 @@ token terminator:sym<;> { <?[;]> }
 token terminator:sym<)> { <?[)]> }
 token terminator:sym<]> { <?[\]]> }
 token terminator:sym<}> { <?[}]> }
-token terminator:sym<if>     { 'if'     <.nofun> }
-token terminator:sym<unless> { 'unless' <.nofun> }
-token terminator:sym<while>  { 'while'  <.nofun> }
-token terminator:sym<until>  { 'until'  <.nofun> }
-token terminator:sym<for>    { 'for'    <.nofun> }
-token terminator:sym<given>  { 'given'  <.nofun> }
-token terminator:sym<when>   { 'when'   <.nofun> }
+token terminator:sym<if>     { 'if'     <.end_keyword> }
+token terminator:sym<unless> { 'unless' <.end_keyword> }
+token terminator:sym<while>  { 'while'  <.end_keyword> }
+token terminator:sym<until>  { 'until'  <.end_keyword> }
+token terminator:sym<for>    { 'for'    <.end_keyword> }
+token terminator:sym<given>  { 'given'  <.end_keyword> }
+token terminator:sym<when>   { 'when'   <.end_keyword> }
 
 token stdstopper { <?terminator> }
 
@@ -380,25 +382,25 @@ token stdstopper { <?terminator> }
 proto token statement_control { <...> }
 
 token statement_control:sym<if> {
-    <sym> :s
+    <sym> <.end_keyword> :s
     <xblock>
     [ 'elsif'\s <xblock> ]*
     [ 'else'\s <else=.pblock> ]?
 }
 
 token statement_control:sym<unless> {
-    <sym> :s
+    <sym> <.end_keyword> :s
     <xblock>
     [ <!before 'else'> || <.panic: 'unless does not take "else", please rewrite using "if"'> ]
 }
 
 token statement_control:sym<while> {
-    $<sym>=[while|until] :s
+    $<sym>=[while|until] <.end_keyword> :s
     <xblock>
 }
 
 token statement_control:sym<repeat> {
-    <sym> :s
+    <sym> <.end_keyword> :s
     [
     | $<wu>=[while|until]\s <xblock>
     | <pblock> $<wu>=[while|until]\s <EXPR>
@@ -406,7 +408,7 @@ token statement_control:sym<repeat> {
 }
 
 token statement_control:sym<for> {
-    <sym> :s
+    <sym> <.end_keyword> :s
     [ <?before 'my'? '$'\w+ '(' >
         <.panic: "This appears to be Perl 5 code"> ]?
     [ <?before '(' <.EXPR>? ';' <.EXPR>? ';' <.EXPR>? ')' >
@@ -415,11 +417,11 @@ token statement_control:sym<for> {
 }
 
 token statement_control:sym<foreach> {
-    <sym> <.nofun> <.obs("'foreach'", "'for'")>
+    <sym> <.end_keyword> <.obs("'foreach'", "'for'")>
 }
 
 token statement_control:sym<loop> {
-    <sym>
+    <sym> <.end_keyword>
     [ <?[({]> <.panic: "Whitespace required after 'loop'"> ]?
     :s
     [ '('
@@ -460,14 +462,22 @@ token statement_control:sym<use> {
     <.ws>
 }
 
+rule statement_control:sym<require> {
+    <sym>
+    [
+    | <module_name> <EXPR>?
+    | <EXPR>
+    ]
+}
+
 token statement_control:sym<given> {
-    <sym> :s <xblock(1)>
+    <sym> <.end_keyword> :s <xblock(1)>
 }
 token statement_control:sym<when> {
-    <sym> :s <xblock>
+    <sym> <.end_keyword> :s <xblock>
 }
 rule statement_control:sym<default> {
-    <sym> <block>
+    <sym><.end_keyword> <block>
 }
 
 rule statement_control:sym<CATCH> {<sym> <block(1)> }
@@ -478,6 +488,18 @@ token statement_prefix:sym<BEGIN> { <sym> <blorst> }
 token statement_prefix:sym<CHECK> { <sym> <blorst> }
 token statement_prefix:sym<INIT>  { <sym> <blorst> }
 token statement_prefix:sym<END>   { <sym> <blorst> }
+token statement_prefix:sym<FIRST> { <sym> <blorst>
+        <.panic("FIRST phaser not yet implemented")> }
+token statement_prefix:sym<LAST>  { <sym> <blorst>
+        <.panic("LAST phaser not yet implemented")> }
+token statement_prefix:sym<ENTER> { <sym> <blorst>
+        <.panic("ENTER phaser not yet implemented")> }
+token statement_prefix:sym<LEAVE> { <sym> <blorst>
+        <.panic("LEAVE phaser not yet implemented")> }
+token statement_prefix:sym<PRE> { <sym> <blorst>
+        <.panic("PRE phaser not yet implemented")> }
+token statement_prefix:sym<POST> { <sym> <blorst>
+        <.panic("POST phaser not yet implemented")> }
 token statement_prefix:sym<sink>  { <sym> <blorst> }
 token statement_prefix:sym<try>   { <sym> <blorst> }
 token statement_prefix:sym<gather>{ <sym> <blorst> }
@@ -514,7 +536,9 @@ token term:sym<scope_declarator>   { <scope_declarator> }
 token term:sym<routine_declarator> { <routine_declarator> }
 token term:sym<multi_declarator>   { <?before 'multi'|'proto'|'only'> <multi_declarator> }
 token term:sym<regex_declarator>   { <regex_declarator> }
+token term:sym<circumfix>          { <circumfix> }
 token term:sym<statement_prefix>   { <statement_prefix> }
+token term:sym<**>                 { <sym> <.panic('HyperWhatever (**) not yet implemented')> }
 token term:sym<*>                  { <sym> }
 token term:sym<lambda>             { <?lambda> <pblock> }
 # token term:sym<sigterm>            { <sigterm> }   # see colonpair instead
@@ -528,7 +552,7 @@ token term:sym<undef> {
     [ <?before [ '(' || \h*<sigil><twigil>?\w ] >
         <.obs('undef as a verb', 'undefine function or assignment of Nil')>
     ]?
-    <.obs('undef as a value', "something more specific:\n\tMu (the \"most undefined\" type object),\n\tan undefined type object such as Int,\n\tNil as an empty list,\n\t*.notdef as a matcher or method,\n\tAny:U as a type constraint\n\tor fail() as a failure return\n\t   ")>
+    <.obs('undef as a value', "something more specific:\n\tMu (the \"most undefined\" type object),\n\tan undefined type object such as Int,\n\tNil as an empty list,\n\t!*.defined as a matcher or method,\n\tAny:U as a type constraint\n\tor fail() as a failure return\n\t   ")>
 }
 
 token term:sym<new> {
@@ -772,9 +796,11 @@ token variable {
     ||  [
         | <sigil> <twigil>? <desigilname>
         | <special_variable>
-        | <sigil> $<index>=[\d+]
+        | <sigil> $<index>=[\d+] [ <?{ $*IN_DECL}> <.panic: "Can't declare a numeric variable">]?
         | <sigil> <?[<[]> <postcircumfix>
         | $<sigil>=['$'] $<desigilname>=[<[/_!]>]
+        | <sigil> <?{ $*IN_DECL }>
+        | <!{ $*QSIGIL }> <.panic("Non-declarative sigil is missing its name")>
         ]
     ]
     [ <?{ $<twigil> && $<twigil>[0] eq '.' }>
@@ -819,7 +845,7 @@ token package_declarator:sym<does> {
     <typename>
 }
 
-rule package_def {
+rule package_def {<.end_keyword>
     :my $*IN_DECL := 'package';
     <.newpad>
     <def_module_name>?
@@ -833,8 +859,9 @@ rule package_def {
                 $/.CURSOR.panic('This appears to be Perl 5 code. If you intended it to be Perl 6 code, please use a Perl 6 style package block like "package Foo { ... }", or "module Foo; ...".');
             }
         }
+        { $*IN_DECL := '' }
         <statementlist>
-    || <?[{]> <blockoid>
+    || <?[{]> { $*IN_DECL := '' } <blockoid>
     || <.panic: 'Malformed package declaration'>
     ]
 }
@@ -852,15 +879,15 @@ token declarator {
 
 proto token multi_declarator { <...> }
 token multi_declarator:sym<multi> {
-    <sym> :my $*MULTINESS := 'multi';
+    <sym> :my $*MULTINESS := 'multi'; <.end_keyword>
     <.ws> [ <declarator> || <routine_def> || <.panic: 'Malformed multi'> ]
 }
 token multi_declarator:sym<proto> {
-    <sym> :my $*MULTINESS := 'proto';
+    <sym> :my $*MULTINESS := 'proto'; <.end_keyword>
     <.ws> [ <declarator> || <routine_def> || <.panic: 'Malformed proto'> ]
 }
 token multi_declarator:sym<only> {
-    <sym> :my $*MULTINESS := 'only';
+    <sym> :my $*MULTINESS := 'only'; <.end_keyword>
     <.ws> [ <declarator> || <routine_def> || <.panic: 'Malformed only'> ]
 }
 token multi_declarator:sym<null> {
@@ -875,10 +902,13 @@ token scope_declarator:sym<has>       { <sym> <scoped('has')> }
 token scope_declarator:sym<augment>   { <sym> <scoped('augment')> }
 token scope_declarator:sym<anon>      { <sym> <scoped('anon')> }
 token scope_declarator:sym<supersede> {
-    <sym> <.panic: '"supersede" not yet implemented'>
+    <sym> <scoped('supersede')> <.panic: '"supersede" not yet implemented'>
+}
+token scope_declarator:sym<state> {
+    <sym> <scoped('state')> <.panic: '"state" not yet implemented'>
 }
 
-rule scoped($*SCOPE) {
+rule scoped($*SCOPE) {<.end_keyword> [
     :my $*TYPENAME := '';
     [
     | <DECL=variable_declarator>
@@ -901,7 +931,7 @@ rule scoped($*SCOPE) {
         }
         <!> # drop through
     || { $/.CURSOR.panic("Malformed $*SCOPE") }
-}
+] }
 
 token variable_declarator {
     :my $*IN_DECL := 'variable';
@@ -913,31 +943,53 @@ token variable_declarator {
         | '(' ~ ')' <signature>
         | '[' ~ ']' <semilist>
         | '{' ~ '}' <semilist>
-        ]*
+        ]+
+        <.panic: "Shaped variable declarations are not yet implemented">
     ]?
     <trait>*
 }
 
 proto token routine_declarator { <...> }
 token routine_declarator:sym<sub>
-    { <sym> <.nofun> <routine_def> }
+    { <sym> <.end_keyword> <routine_def> }
 token routine_declarator:sym<method>
-    { <sym> <.nofun> :my $*METHODTYPE := 'Method'; <method_def> }
+    { <sym> <.end_keyword> :my $*METHODTYPE := 'Method'; <method_def> }
 token routine_declarator:sym<submethod>
-    { <sym> <.nofun> :my $*METHODTYPE := 'Submethod'; <method_def> }
+    { <sym> <.end_keyword> :my $*METHODTYPE := 'Submethod'; <method_def> }
+token routine_declarator:sym<macro>
+    { <sym> <.end_keyword>
+      <.panic: "Macros are not yet implemented"> }
 
 rule routine_def {
     :my $*IN_DECL := 'routine';
     <deflongname>?
     {
         if $<deflongname> && $<deflongname>[0]<colonpair> {
-            $/.CURSOR.gen_op_if_needed($<deflongname>[0]);
+            # It's an (potentially new) operator, circumfix, etc. that we
+            # need to tweak into the grammar.
+            my $category := $<deflongname>[0]<name>.Str;
+            my $opname   := ~$<deflongname>[0]<colonpair>[0]<circumfix><quote_EXPR><quote_delimited><quote_atom>[0];
+            my $canname  := $category ~ ":sym<" ~ $opname ~ ">";
+            unless pir::can__IPS(Perl6::Grammar, $canname) {
+                # Not known; add a BEGIN phaser that generates it. This gets
+                # run immediately, but also persisted into the bytecode so
+                # e.g. eval's or operators defined in the setting will still
+                # be parseable. Note this should really be mix-in-ier and not
+                # globally tweak the grammar in the long run.
+                my $gen_block := PAST::Block.new( :node($/),
+                    PAST::Op.new(
+                        :pasttype('callmethod'), :name('gen_op'),
+                        PAST::Var.new( :name('Grammar'), :namespace('Perl6'), :scope('package') ),
+                        $category, $opname, $canname, $<deflongname>[0].ast
+                    ));
+                Perl6::Actions.add_phaser($/, $gen_block, 'BEGIN');
+            }
         }
     }
     <.newpad>
     [ '(' <multisig> ')' ]?
     <trait>*
-    { $*IN_DECL := ''; }
+    { $*IN_DECL := ''; $*IMPLICIT := 0; }
     <blockoid>
 }
 
@@ -1023,11 +1075,11 @@ token parameter {
     # enforce zone constraints
     {
         my $kind :=
-            $<named_param>                     ?? '*' !! 
-            $<quant> eq '?'                    ?? '?' !!
-            $<quant> eq '!'                    ?? '!' !!
-            $<quant> ne '' && $<quant> ne '\\' ?? '*' !!
-                                                  '!';
+            $<named_param>                      ?? '*' !!
+            $<quant> eq '?' || $<default_value> ?? '?' !!
+            $<quant> eq '!'                     ?? '!' !!
+            $<quant> ne '' && $<quant> ne '\\'  ?? '*' !!
+                                                   '!';
 
         if $kind eq '!' {
             if $*zone eq 'posopt' {
@@ -1113,15 +1165,16 @@ token regex_declarator:sym<regex> {
     <regex_def>
 }
 
-rule regex_def {
+rule regex_def {<.end_keyword> [
     [
+      { $*IN_DECL := '' }
       <deflongname>?
       <.newpad>
       [ [ ':'?'(' <signature> ')'] | <trait> ]*
       {*} #= open
       '{'[ '<...>' |<p6regex=.LANG('Regex','nibbler')>]'}'<?ENDSTMT>
     ] || <.panic: "Malformed regex">
-}
+] }
 
 proto token type_declarator { <...> }
 
@@ -1133,14 +1186,35 @@ token type_declarator:sym<enum> {
 
 token type_declarator:sym<subset> {
     <sym> :my $*IN_DECL := 'subset';
+    <.end_keyword>
     :s
     [
         [
             [ <longname> { $/.CURSOR.add_name($<longname>[0].Str); } ]?
+            { $*IN_DECL := '' }
             <trait>*
             [ where <EXPR('e=')> ]?
         ]
         || <.panic: 'Malformed subset'>
+    ]
+}
+
+token type_declarator:sym<constant> {
+    :my $*IN_DECL := 'constant';
+    <sym> <.end_keyword> <.ws>
+
+    [
+    | <identifier>
+    | <variable>
+    | <?>
+    ]
+    { $*IN_DECL := ''; }
+    <.ws>
+
+    [
+    || <?before '='>
+    || <?before <-[\n=]>*'='> <.panic: "Malformed constant"> # probable initializer later
+    || <.panic: "Missing initializer on constant declaration">
     ]
 }
 
@@ -1179,13 +1253,17 @@ token trait_mod:sym<handles> { <sym>:s <term> }
 
 proto token term { <...> }
 
-token term:sym<YOU_ARE_HERE> { <sym> <.nofun> }
+token term:sym<YOU_ARE_HERE> { <sym> <.end_keyword> }
 
-token term:sym<self> { <sym> <.nofun> }
+token term:sym<self> { <sym> <.end_keyword> }
 
-token term:sym<Nil>  { <sym> <.nofun> }
+token term:sym<now> { <sym> <.end_keyword> }
+
+token term:sym<time> { <sym> <.end_keyword> }
+
 token term:sym<rand> {
     <sym> »
+    <.end_keyword>
     [ <?before '('? \h* [\d|'$']> <.obs('rand(N)', 'N.rand or (1..N).pick')> ]?
     [ <?before '()'> <.obs('rand()', 'rand')> ]?
 }
@@ -1316,11 +1394,33 @@ token typename {
 
 token term:sym<type_declarator>   { <type_declarator> }
 
+token quotepair {
+    :my $*key;
+    :my $*value;
+    ':'
+    # :dba('restricted colonpair')
+    [
+    | '!' <identifier> [ <?before '('> <.panic('Argument not allowed on negated pair')> ]?
+        { $*key := ~$<identifier>; $*value := 0; }
+    | <identifier> 
+        { $*key := ~$<identifier> }
+        [
+        || <?before '('> <circumfix> { $*value := $<circumfix>.ast; }
+        || { $*value := 1; }
+        ]
+    | (\d+) <identifier>
+        [ <?before '('> <.cirumfix> <.panic('2nd argument not allowed on pair')> ]?
+        { $*key := ~$<identifier>; $*value := +~$/[0] }
+    ]
+}
+
+
 proto token quote { <...> }
 token quote:sym<apos>  { <?[']>                <quote_EXPR: ':q'>  }
 token quote:sym<dblq>  { <?["]>                <quote_EXPR: ':qq'> }
 token quote:sym<q>     { 'q'   >> <![(]> <.ws> <quote_EXPR: ':q'>  }
 token quote:sym<qq>    { 'qq'  >> <![(]> <.ws> <quote_EXPR: ':qq'> }
+token quote:sym<qw>    { 'qw'  >> <![(]> <.ws> <quote_EXPR: ':q',':w'> }
 token quote:sym<qx>    { 'qx'  >> <![(]> <.ws> <quote_EXPR: ':q'>  }
 token quote:sym<qqx>   { 'qqx' >> <![(]> <.ws> <quote_EXPR: ':qq'> }
 token quote:sym<Q>     { 'Q'   >> <![(]> <.ws> <quote_EXPR> }
@@ -1329,26 +1429,61 @@ token quote:sym</null/> { '/' \s* '/' <.panic: "Null regex not allowed"> }
 token quote:sym</ />  { '/'<p6regex=.LANG('Regex','nibbler')>'/' <.old_rx_mods>? }
 token quote:sym<rx>   {
     <sym> >> 
+    [ <quotepair> <.ws> ]*
+    :my @*REGEX_ADVERBS;
+    { @*REGEX_ADVERBS := $<quotepair>; }
+    <.setup_quotepairs>
     [
     | '/'<p6regex=.LANG('Regex','nibbler')>'/' <.old_rx_mods>?
     | '{'<p6regex=.LANG('Regex','nibbler')>'}' <.old_rx_mods>?
     ]
+    <.cleanup_modifiers>
 }
+
+method match_with_adverb($v) {
+    my $s := Regex::Match.new();
+    $s.'!make'(PAST::Val.new(:value(1), :named('s')));
+    $s;
+}
+
 token quote:sym<m> {
-    <sym> >>
+    <sym> (s)?>>
+    [ <quotepair> <.ws> ]*
+    :my @*REGEX_ADVERBS;
+    { @*REGEX_ADVERBS := $<quotepair>;
+      if $/[0] {
+          pir::push__vPP(@*REGEX_ADVERBS, $/.CURSOR.match_with_adverb('s'));
+      }
+    }
+    <.setup_quotepairs>
     [
     | '/'<p6regex=.LANG('Regex','nibbler')>'/' <.old_rx_mods>?
     | '{'<p6regex=.LANG('Regex','nibbler')>'}'
     ]
+    <.cleanup_modifiers>
 }
+
+token setup_quotepairs { '' }
+token cleanup_modifiers { '' }
+
 token quote:sym<s> {
-    <sym> >>
+    <sym> (s)? >>
+    [ <quotepair> <.ws> ]*
+    :my @*REGEX_ADVERBS;
+    {
+        @*REGEX_ADVERBS := $<quotepair>;
+        if $/[0] {
+            pir::push__vPP(@*REGEX_ADVERBS, $/.CURSOR.match_with_adverb('s'));
+        }
+    }
+    <.setup_quotepairs>
     [
     | '/' <p6regex=.LANG('Regex','nibbler')> <?[/]> <quote_EXPR: ':qq'> <.old_rx_mods>?
     | '[' <p6regex=.LANG('Regex','nibbler')> ']'
       <.ws> [ '=' || <.panic: "Missing assignment operator"> ]
       <.ws> <EXPR('i')>
     ]
+    <.cleanup_modifiers>
 }
 
 token old_rx_mods {
@@ -1369,7 +1504,8 @@ token old_rx_mods {
 token quote_escape:sym<$> {
     <?[$]>
     :my $*QSIGIL := '$';
-    <?quotemod_check('s')> <EXPR('y=')>
+    <?quotemod_check('s')>
+    [ <EXPR('y=')> || <.panic: "Non-variable \$ must be backslashed"> ]
 }
 
 token quote_escape:sym<array> {
@@ -1397,7 +1533,7 @@ token circumfix:sym<[ ]> { '[' <semilist> ']' }
 token circumfix:sym<ang> {
     <?[<]>
     [ <?before '<STDIN>' > <.obs('<STDIN>', '$*IN.lines')> ]?
-    [ <?before '<>' > <.obs('<>', 'lines() or ()')> ]?
+    [ <?before '<>' > <.obs('<>', 'lines() to read input, (\'\') to represent a null string or () to represent an empty list')> ]?
     <quote_EXPR: ':q', ':w'>
 }
 token circumfix:sym<« »> { <?[«]>  <quote_EXPR: ':qq', ':w'> }
@@ -1422,18 +1558,18 @@ INIT {
     Perl6::Grammar.O(':prec<p=>, :assoc<list>', '%junctive_or');
     Perl6::Grammar.O(':prec<o=>, :assoc<unary>', '%named_unary');
     Perl6::Grammar.O(':prec<n=>, :assoc<left>',  '%structural');
-    Perl6::Grammar.O(':prec<m=>, :assoc<left>, :pasttype<chain>',  '%chaining');
+    Perl6::Grammar.O(':prec<m=>, :assoc<left>, :iffy<1>, :pasttype<chain>',  '%chaining');
     Perl6::Grammar.O(':prec<l=>, :assoc<left>',  '%tight_and');
     Perl6::Grammar.O(':prec<k=>, :assoc<list>',  '%tight_or');
     Perl6::Grammar.O(':prec<j=>, :assoc<right>', '%conditional');
     Perl6::Grammar.O(':prec<i=>, :assoc<right>', '%item_assignment');
+    Perl6::Grammar.O(':prec<i=>, :assoc<right>, :sub<e=>', '%list_assignment');
     Perl6::Grammar.O(':prec<h=>, :assoc<unary>', '%loose_unary');
     Perl6::Grammar.O(':prec<g=>, :assoc<list>, :nextterm<nulltermish>',  '%comma');
     Perl6::Grammar.O(':prec<f=>, :assoc<list>',  '%list_infix');
-    Perl6::Grammar.O(':prec<e=>, :assoc<right>', '%list_assignment');   # XXX
     Perl6::Grammar.O(':prec<e=>, :assoc<right>', '%list_prefix');
     Perl6::Grammar.O(':prec<d=>, :assoc<left>',  '%loose_and');
-    Perl6::Grammar.O(':prec<c=>, :assoc<left>',  '%loose_or');
+    Perl6::Grammar.O(':prec<c=>, :assoc<list>',  '%loose_or');
     Perl6::Grammar.O(':prec<b=>, :assoc<list>',  '%sequencer');
 }
 
@@ -1680,33 +1816,35 @@ token prefix:sym<|>   { <sym>  <O('%symbolic_unary')> }
 
 token infix:sym<*>    { <sym>  <O('%multiplicative')> }
 token infix:sym</>    { <sym>  <O('%multiplicative')> }
-token infix:sym<div>  { <sym>  <O('%multiplicative')> }
+token infix:sym<div>  { <sym> >> <O('%multiplicative')> }
 token infix:sym<%>    { <sym>  <O('%multiplicative')> }
-token infix:sym<!%>   { <sym> <panic("Infix !% is deprecated in favor of infix %%")> }
-token infix:sym<mod>  { <sym>  <O('%multiplicative')> }
-token infix:sym<%%>   { <sym>  <O('%multiplicative')> }
+token infix:sym<mod>  { <sym> >> <O('%multiplicative')> }
+token infix:sym<%%>   { <sym>  <O('%multiplicative, :iffy<1>')> }
 token infix:sym<+&>   { <sym>  <O('%multiplicative')> }
 token infix:sym<~&>   { <sym>  <O('%multiplicative')> }
 token infix:sym<?&>   { <sym>  <O('%multiplicative')> }
+token infix:sym«+<»   { <sym> <!before '<'> <O('%multiplicative')> }
+token infix:sym«+>»   { <sym> <!before '>'> <O('%multiplicative')> }
 
 token infix:sym«<<» { <sym> \s <.obs('<< to do left shift', '+< or ~<')> }
 
 token infix:sym«>>» { <sym> \s <.obs('>> to do right shift', '+> or ~>')> }
 
-
 token infix:sym<+>    { <sym>  <O('%additive')> }
-token infix:sym<->    { <sym> <![>]> <O('%additive')> }
+token infix:sym<->    {
+   # We want to match in '$a >>->> $b' but not 'if $a -> { ... }'.
+    <sym> [<?before '>>'> || <!before '>'>]
+    <O('%additive')>
+}
 token infix:sym<+|>   { <sym>  <O('%additive')> }
 token infix:sym<+^>   { <sym>  <O('%additive')> }
 token infix:sym<~|>   { <sym>  <O('%additive')> }
 token infix:sym<~^>   { <sym>  <O('%additive')> }
-token infix:sym«+<»   { <sym> <!before '<'> <O('%additive')> }
-token infix:sym«+>»   { <sym> <!before '>'> <O('%additive')> }
 token infix:sym<?|>   { <sym>  <O('%additive')> }
 token infix:sym<?^>   { <sym>  <O('%additive')> }
 
-token infix:sym<x>    { <sym>  <O('%replication')> }
-token infix:sym<xx>    { <sym>  <O('%replication')> }
+token infix:sym<x>    { <sym> >> <O('%replication')> }
+token infix:sym<xx>    { <sym> >> <O('%replication')> }
 
 token infix:sym<~>    { <sym>  <O('%concatenation')> }
 
@@ -1723,32 +1861,46 @@ token infix:sym«<=»   { <sym>  <O('%chaining')> }
 token infix:sym«>=»   { <sym>  <O('%chaining')> }
 token infix:sym«<»    { <sym>  <O('%chaining')> }
 token infix:sym«>»    { <sym>  <O('%chaining')> }
-token infix:sym«eq»   { <sym>  <O('%chaining')> }
-token infix:sym«ne»   { <sym>  <O('%chaining')> }
-token infix:sym«le»   { <sym>  <O('%chaining')> }
-token infix:sym«ge»   { <sym>  <O('%chaining')> }
-token infix:sym«lt»   { <sym>  <O('%chaining')> }
-token infix:sym«gt»   { <sym>  <O('%chaining')> }
+token infix:sym«eq»   { <sym> >> <O('%chaining')> }
+token infix:sym«ne»   { <sym> >> <O('%chaining')> }
+token infix:sym«le»   { <sym> >> <O('%chaining')> }
+token infix:sym«ge»   { <sym> >> <O('%chaining')> }
+token infix:sym«lt»   { <sym> >> <O('%chaining')> }
+token infix:sym«gt»   { <sym> >> <O('%chaining')> }
 token infix:sym«=:=»  { <sym>  <O('%chaining')> }
 token infix:sym<===>  { <sym>  <O('%chaining')> }
-token infix:sym<eqv>  { <sym>  <O('%chaining')> }
-token infix:sym<before>  { <sym>  <O('%chaining')> }
-token infix:sym<after>  { <sym>  <O('%chaining')> }
-token infix:sym<~~>   { <sym>  <O('%chaining')> }
+token infix:sym<eqv>  { <sym> >> <O('%chaining')> }
+token infix:sym<before>  { <sym> >> <O('%chaining')> }
+token infix:sym<after>  { <sym>>>  <O('%chaining')> }
+token infix:sym<~~>   { <sym>  <O('%chaining')> <!dumbsmart> }
+token infix:sym<!~~>  { <sym>  <O('%chaining')> <!dumbsmart> }
+
+token dumbsmart {
+    # should be
+    # 'Bool::'? True && <.longname>
+    # once && in regexes is implemented
+    | <?before \h* [ 'Bool::'? 'True' && <.longname> ] >  <.panic("Smartmatch against True always matches; if you mean to test the topic for truthiness, use :so or *.so or ?* instead")>
+    | <?before \h* [ 'Bool::'? 'False' && <.longname> ] > <.panic("Smartmatch against False always fails; if you mean to test the topic for truthiness, use :!so or *.not or !* instead")>
+}
 
 token infix:sym<&&>   { <sym>  <O('%tight_and, :pasttype<if>')> }
 
 token infix:sym<||>   { <sym>  <O('%tight_or, :assoc<left>, :pasttype<unless>')> }
 token infix:sym<^^>   { <sym>  <O('%tight_or, :pasttype<xor>')> }
 token infix:sym<//>   { <sym>  <O('%tight_or, :assoc<left>, :pasttype<def_or>')> }
-token infix:sym<min>  { <sym>  <O('%tight_or')> }
-token infix:sym<max>  { <sym>  <O('%tight_or')> }
+token infix:sym<min>  { <sym> >> <O('%tight_or')> }
+token infix:sym<max>  { <sym> >> <O('%tight_or')> }
 
 token infix:sym<?? !!> {
     '??'
     <.ws>
     <EXPR('i=')>
-    '!!'
+    [ '!!'
+    || <?before '::'<-[=]>> <.panic: "Please use !! rather than ::">
+    || <?before ':' <-[=]>> <.panic: "Please use !! rather than :">
+    || <?before \N*? [\n\N*?]?> '!!' <.panic("Bogus code found before the !!")>
+    || <.panic("Found ?? but no !!")>
+    ]
     <O('%conditional, :reducecheck<ternary>, :pasttype<if>')>
 }
 
@@ -1756,17 +1908,18 @@ token infix_prefix_meta_operator:sym<!> {
     <sym> <infixish> 
     [
     || <?{ $<infixish>.Str eq '=' }> <O('%chaining')>
-    || <O=.copyO('infixish')>
+    || <?{ $<infixish><OPER><O><iffy> }> <O=.copyO('infixish')>
+    || <.panic("Can't negate " ~ $<infixish>.Str ~ " because it is not iffy enough")>
     ]
 }
 token infix_prefix_meta_operator:sym<R> { <sym> <infixish> <O=.copyO('infixish')> }
 token infix_prefix_meta_operator:sym<S> { <sym> <infixish> <O=.copyO('infixish')> }
 token infix_prefix_meta_operator:sym<X> { <sym> <infixish> <O('%list_infix')> }
 token infix_prefix_meta_operator:sym<Z> { <sym> <infixish> <O('%list_infix')> }
-token infix:sym<minmax> { <sym>  <O('%list_infix')> }
+token infix:sym<minmax> { <sym> >> <O('%list_infix')> }
 
 token infix:sym<:=> {
-    <sym>  <O('%item_assignment, :reducecheck<bindish_check>')>
+    <sym>  <O('%list_assignment, :reducecheck<bindish_check>')>
 }
 
 method bindish_check($/) {
@@ -1793,13 +1946,25 @@ token infix:sym«=>» { <sym> <O('%item_assignment')> }
 token prefix:sym<so> { <sym> >> <O('%loose_unary')> }
 token prefix:sym<not>  { <sym> >> <O('%loose_unary')> }
 
-token infix:sym<,>    { <sym>  <O('%comma')> }
+token infix:sym<,>    {
+    <sym>  <O('%comma')>
+    # TODO: should be <.worry>, not <.panic>
+    [ <?before \h*'...'> <.panic: "Comma found before apparent series operator; please remove comma (or put parens\n    around the ... listop, or use 'fail' instead of ...)"> ]?
+}
 
 token infix:sym<Z>    { <!before <sym> <infixish> > <sym>  <O('%list_infix')> }
 token infix:sym<X>    { <!before <sym> <infixish> > <sym>  <O('%list_infix')> }
 
 token infix:sym<...>  { <sym>  <O('%list_infix')> }
+token infix:sym<...^> { <sym>  <O('%list_infix')> }
 # token term:sym<...>   { <sym> <args>? <O(|%list_prefix)> }
+
+token infix:sym<?>    { <sym> {} <!before '?'> <?before <-[;]>*?':'> <.obs('?: for the conditional operator', '??!!')> <O('%conditional')> }
+
+token infix:sym<ff> { <sym> <.panic('Flip flip operators are not yet implemented')> }
+token infix:sym<^ff> { <sym> <.panic('Flip flip operators are not yet implemented')> }
+token infix:sym<ff^> { <sym> <.panic('Flip flip operators are not yet implemented')> }
+token infix:sym<^ff^> { <sym> <.panic('Flip flip operators are not yet implemented')> }
 
 token infix:sym<=> {
     <sym>
@@ -1818,11 +1983,11 @@ method assign_check($/) {
     }
 }
 
-token infix:sym<and>  { <sym>  <O('%loose_and, :pasttype<if>')> }
+token infix:sym<and>  { <sym> >> <O('%loose_and, :pasttype<if>')> }
 
-token infix:sym<or>   { <sym>  <O('%loose_or, :pasttype<unless>')> }
-token infix:sym<xor>  { <sym>  <O('%loose_or, :pasttype<xor>')> }
-token infix:sym<err>  { <sym>  <O('%loose_or, :pasttype<def_or>')> }
+token infix:sym<or>   { <sym> >> <O('%loose_or, :assoc<left>, :pasttype<unless>')> }
+token infix:sym<xor>  { <sym> >> <O('%loose_or, :pasttype<xor>')> }
+token infix:sym<orelse> { <sym> >> <O('%loose_or, :assoc<left>, :pasttype<def_or>')> }
 
 token infix:sym«<==»  { <sym> <O('%sequencer')> }
 token infix:sym«==>»  { <sym> <O('%sequencer')> }
@@ -1834,12 +1999,12 @@ token infix:sym<^..>  { <sym> <O('%structural')> }
 token infix:sym<..^>  { <sym> <O('%structural')> }
 token infix:sym<^..^> { <sym> <O('%structural')> }
 
-token infix:sym<leg>  { <sym> <O('%structural')> }
-token infix:sym<cmp>  { <sym> <O('%structural')> }
+token infix:sym<leg>  { <sym> >> <O('%structural')> }
+token infix:sym<cmp>  { <sym> >> <O('%structural')> }
 token infix:sym«<=>»  { <sym> <O('%structural')> }
 
-token infix:sym<but>  { <sym> <O('%structural')> }
-token infix:sym<does> { <sym> <O('%structural')> }
+token infix:sym<but>  { <sym> >> <O('%structural')> }
+token infix:sym<does> { <sym> >> <O('%structural')> }
 
 token infix:sym<!~> { <sym> \s <.obs('!~ to do negated pattern matching', '!~~')> <O('%chaining')> }
 token infix:sym<=~> { <sym> <.obs('=~ to do pattern matching', '~~')> <O('%chaining')> }
@@ -1932,66 +2097,109 @@ sub parse_name($name) {
 
 
 # This sub is used to augment the grammar with new ops at parse time.
-method gen_op_if_needed($deflongname) {
+method gen_op($category, $opname, $canname, $subname) {
     my $self := Q:PIR { %r = self };
 
-    # Extract interesting bits from the longname.
-    my $category := $deflongname<name>.Str;
-    my $opname   := ~$deflongname<colonpair>[0]<circumfix><quote_EXPR><quote_delimited><quote_atom>[0];
-    my $canname  := $category ~ ":sym<" ~ $opname ~ ">";
-
-    # Work out what default precedence we want.
+    # Work out what default precedence we want, or if it's more special than
+    # just an operator.
     my $prec;
+    my $is_oper;
     if $category eq 'infix' {
         $prec := '%additive';
+        $is_oper := 1;
     }
     elsif $category eq 'prefix' {
         $prec := '%symbolic_unary';
+        $is_oper := 1;
     }
     elsif $category eq 'postfix' {
         $prec := '%autoincrement';
+        $is_oper := 1;
+    }
+    elsif $category eq 'circumfix' {
+        $is_oper := 0;
+    }
+    elsif $category eq 'trait_mod' {
+        return 0;
     }
     else {
-        return;
+        self.panic("Can not add tokens of category '$category' with a sub");
     }
 
-    # Check if we have the op already.
-    unless pir::can__IPS($self, $canname) {
-        # Nope, so we need to modify the grammar. Build code to parse it.
-        my $parse := Regex::P6Regex::Actions::buildsub(PAST::Regex.new(
-            :pasttype('concat'),
+    # Nope, so we need to modify the grammar. Build code to parse it.
+    my $parse := PAST::Regex.new(
+        :pasttype('concat')
+    );
+    if $is_oper {
+        # For operator, it's just like 'op' <O('%prec')>
+        $parse.push(PAST::Regex.new(
+            :pasttype('subcapture'),
+            :name('sym'),
+            :backtrack('r'),
             PAST::Regex.new(
-                :pasttype('subcapture'),
-                :name('sym'),
-                :backtrack('r'),
-                PAST::Regex.new(
-                    :pasttype('literal'),
-                    $opname
-                )
-            ),
-            PAST::Regex.new(
-                :pasttype('subrule'),
-                :name('O'),
-                :backtrack('r'),
-                'O',
-                PAST::Val.new( :value($prec) )
+                :pasttype('literal'),
+                $opname
             )
         ));
-
-        # Needs to go into the Perl6::Grammar namespace.
-        $parse.name($canname);
-        $parse.namespace(pir::split('::', 'Perl6::Grammar'));
-
-        # Compile and then install the two produced methods into the
-        # Perl6::Grammar methods table.
-        my $compiled := PAST::Compiler.compile($parse);
-        $self.HOW.add_method($self, ~$compiled[0], $compiled[0]);
-        $self.HOW.add_method($self, ~$compiled[1], $compiled[1]);
-
-        # Mark proto-regex table as needing re-generation.
-        Q:PIR {
-            $P0 = find_lex '$self'
-            $P0.'!protoregex_generation'()
-        };
+        $parse.push(PAST::Regex.new(
+            :pasttype('subrule'),
+            :name('O'),
+            :backtrack('r'),
+            'O',
+            PAST::Val.new( :value($prec) )
+        ));
     }
+    else {
+        # Find opener and closer and parse an EXPR between them.
+        # XXX One day semilist would be nice, but right now that
+        # runs us into fun with terminators.
+        my @parts := pir::split__Pss(' ', $opname);
+        if +@parts != 2 {
+            self.panic("Unable to find starter and stopper from '$opname'");
+        }
+        $parse.push(PAST::Regex.new(
+            :pasttype('literal'), :backtrack('r'),
+            ~@parts[0]
+        ));
+        $parse.push(PAST::Regex.new(
+            :pasttype('concat'),
+            PAST::Regex.new(
+                :pasttype('subrule'), :subtype('capture'), :backtrack('r'),
+                :name('EXPR'), 'EXPR'
+            ),
+            PAST::Regex.new(
+                :pasttype('literal'), :backtrack('r'),
+                ~@parts[1]
+            )
+        ));
+    }
+    $parse := Regex::P6Regex::Actions::buildsub($parse);
+
+    # Needs to go into the Perl6::Grammar namespace.
+    $parse.name($canname);
+    $parse.namespace(pir::split('::', 'Perl6::Grammar'));
+
+    # Compile and then install the two produced methods into the
+    # Perl6::Grammar methods table.
+    my $compiled := PAST::Compiler.compile($parse);
+    $self.HOW.add_method($self, ~$compiled[0], $compiled[0]);
+    $self.HOW.add_method($self, ~$compiled[1], $compiled[1]);
+
+    # May also need to add to the actions.
+    if $category eq 'circumfix' {
+        Perl6::Actions.HOW.add_method(Perl6::Actions, $canname, sub ($self, $/) {
+            make PAST::Op.new(
+                :pasttype('call'), :name($subname),
+                $<EXPR>.ast
+            );
+        });
+    }
+
+    # Mark proto-regex table as needing re-generation.
+    Q:PIR {
+        $P0 = find_lex '$self'
+        $P0.'!protoregex_generation'()
+    };
+
+    return 1;
 }

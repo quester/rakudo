@@ -1,4 +1,4 @@
-subset Matcher of Mu where { .can('ACCEPTS') };
+subset Matcher of Mu where { .^can('ACCEPTS') };
 
 augment class Mu {
     method Bool { $.defined }
@@ -8,7 +8,16 @@ augment class Mu {
         self;
     }
 
-    multi method notdef() { !self.defined; }
+    multi method notdef() {
+        die ".notdef is deprecated, please use negated .defined instead";
+    }
+
+    method note() {
+        note(self);
+    }
+
+    multi method so() { self.Bool }
+    multi method not() { self ?? False !! True }
 
     multi method perl() {
         my sub typename(Mu $x) { pir::typeof__SP($x) };

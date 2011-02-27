@@ -239,7 +239,7 @@ static candidate_info** sort_candidates(PARROT_INTERP, PMC *candidates, PMC **pr
         llsig = VTABLE_getprop(interp, p6_do, CONST_STRING(interp, "$!llsig"));
         if (PMC_IS_NULL(llsig)) {
             /* No signature - need to lazily generate it. */
-            PMC *sig_meth    = VTABLE_find_method(interp, p6_do, string_from_literal(interp, "!llsig"));
+            PMC *sig_meth    = VTABLE_find_method(interp, p6_do, Parrot_str_new(interp, "!llsig", 0));
             Parrot_ext_call(interp, sig_meth, "P->P", p6_do, &llsig);
         }
         info->llsig = llsig;
@@ -638,6 +638,8 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
             cache = Parrot_mmd_cache_create(interp);
             SETATTR_Perl6MultiSub_cache_single(interp, self, cache);
         }
+        /* We have to WB self because MMD_Cache isn't PMC */
+        PARROT_GC_WRITE_BARRIER(interp, self);
         Parrot_mmd_cache_store_by_values(interp, cache, "", capture, possibles[0]->sub);
     }
 
@@ -650,8 +652,10 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
                 CONST_STRING(interp, "!DISPATCH_JUNCTION_MULTI"));
         sub = VTABLE_clone(interp, sub);
         VTABLE_setprop(interp, sub, CONST_STRING(interp, "sub"), self);
-        if (cache && many == MMD_ONE_RESULT)
+        if (cache && many == MMD_ONE_RESULT) {
+            PARROT_GC_WRITE_BARRIER(interp, self);
             Parrot_mmd_cache_store_by_values(interp, cache, "", capture, sub);
+        }
         junctional_res = sub;
     }
 
@@ -724,6 +728,8 @@ static PMC* do_dispatch(PARROT_INTERP, PMC *self, candidate_info **candidates, P
                 cache = Parrot_mmd_cache_create(interp);
                 SETATTR_Perl6MultiSub_cache_many(interp, self, cache);
             }
+            /* We have to WB self because MMD_Cache isn't PMC */
+            PARROT_GC_WRITE_BARRIER(interp, self);
             Parrot_mmd_cache_store_by_values(interp, cache, "", capture, results);
         }
 
@@ -766,6 +772,7 @@ static PMC *find_many_candidates_with_arg_list(PARROT_INTERP, PMC *SELF, PMC *ca
 
         if (!candidates) {
             candidates = sort_candidates(interp, unsorted, &proto);
+            PARROT_GC_WRITE_BARRIER(interp, SELF);
             SETATTR_Perl6MultiSub_candidates_sorted(interp, SELF, candidates);
             SETATTR_Perl6MultiSub_proto(interp, SELF, proto);
         }
@@ -789,23 +796,6 @@ static PMC *find_many_candidates_with_arg_list(PARROT_INTERP, PMC *SELF, PMC *ca
     return results;
 }
 
-
-
-/*
-
-=item C<static int assert_invokable(PARROT_INTERP, PMC *value)>
-
-Checks if a PMC is invokable; returns a true value if so and a false value if
-not.
-
-=cut
-
-*/
-static int check_invokable(PARROT_INTERP, PMC *value) {
-    STRING * const _sub = CONST_STRING(interp, "Sub");
-    STRING * const _nci = CONST_STRING(interp, "NCI");
-    return VTABLE_isa(interp, value, _sub) || VTABLE_isa(interp, value, _nci);
-}
 
 /*
 
@@ -940,12 +930,6 @@ Frees the memory associated with this PMC's underlying storage.
         PMC_data(SELF) = NULL;
     }
 
-    VTABLE PMC* get_pmc_keyed_int(INTVAL value) {
-        PMC *candidates;
-        GETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
-        return VTABLE_get_pmc_keyed_int(interp, candidates, value);
-    }
-
 /*
 
 =item VTABLE opcode_t invoke()
@@ -985,6 +969,7 @@ the Perl 6 MMD algorithm.
 
             if (!candidates) {
                 candidates = sort_candidates(interp, unsorted, &proto);
+                PARROT_GC_WRITE_BARRIER(INTERP, SELF);
                 SETATTR_Perl6MultiSub_candidates_sorted(interp, SELF, candidates);
                 SETATTR_Perl6MultiSub_proto(interp, SELF, proto);
             }
@@ -1062,14 +1047,6 @@ Adds a new candidate to the candidate list.
     VTABLE void push_pmc(PMC *sub) {
         PMC *candidates;
         MMD_Cache *cache;
-
-        /* Make sure it's invokable. */
-        /* XXX Comment out for now, it's bogus (per jnthn++) */
-        /*
-         * if (!check_invokable(interp, sub))
-         *     Parrot_ex_throw_from_c_args(interp, NULL, EXCEPTION_INVALID_OPERATION,
-         *           "Cannot add non-Sub PMC to a MultiSub.");
-         */
 
         /* Add it to the candidates list. */
         GETATTR_Perl6MultiSub_candidates(interp, SELF, candidates);
@@ -1361,6 +1338,49 @@ skipping any candidates with subids already present in the invocant.
             }
         }
         RETURN (PMC *SELF);
+    }
+
+/*
+
+=item METHOD STRING *dump_sorted_candidate_signatures()
+
+Dumps a list of candidate signautres, sorted in dispatch order.
+
+=cut
+
+*/
+
+    METHOD STRING *dump_sorted_candidate_signatures() {
+        candidate_info **candidates    = NULL;
+        candidate_info **cur_candidate = NULL;
+        STRING          *signatures    = Parrot_str_new(interp, "", 0);
+        PMC             *unsorted;
+
+        /* Make sure that we have a candidate list built. */
+        GETATTR_Perl6MultiSub_candidates_sorted(interp, SELF, candidates);
+        GETATTR_Perl6MultiSub_candidates(interp, SELF, unsorted);
+        if (!candidates) {
+            PMC *proto;
+            candidates = sort_candidates(interp, unsorted, &proto);
+            PARROT_GC_WRITE_BARRIER(interp, SELF);
+            SETATTR_Perl6MultiSub_candidates_sorted(interp, SELF, candidates);
+            SETATTR_Perl6MultiSub_proto(interp, SELF, proto);
+        }
+        if (!candidates)
+            Parrot_ex_throw_from_c_args(interp, NULL, 1,
+                "Failed to build candidate list");
+
+        /* Now go over the candidates and build a result string. */
+        cur_candidate = candidates;
+        while (1) {
+            if (!cur_candidate[0] && !cur_candidate[1])
+                break;
+            if (cur_candidate[0])
+                signatures = dump_signature(interp, signatures, (*cur_candidate)->sub);
+            cur_candidate++;
+        }
+
+        RETURN (STRING *signatures);
     }
 }
 

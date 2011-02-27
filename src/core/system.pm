@@ -28,6 +28,6 @@ sub sleep($seconds = Inf) {         # fractional seconds also allowed
     return $time2 - $time1;
 }
 
-sub time() {
-    pir::time__n()
+sub term:<time>() {
+    pir::time__I()
 }

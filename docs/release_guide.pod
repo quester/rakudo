@@ -29,26 +29,37 @@ part of monthly Parrot releases.
   2010-04-22   Rakudo #28 "Moscow"             (moritz)
   2010-05-20   Rakudo #29 "Erlangen"           (colomon)
   2010-06-17   Rakudo #30 "Kiev"               (masak)
+  2010-07-22   Rakudo #31 "Atlanta"            (Coke)
+  2010-08-19   Rakudo #32 "Pisa"               (mathw)
+  2010-09-23   Rakudo #33 "Milan"              (moritz)
+  2010-10-21   Rakudo #34 "Paris"              (duff)
+  2010-11-18   Rakudo #35 "Melbourne"          (masak)
+  2010-12-23   Rakudo #36 "New York"           (smash)
+  2011-01-20   Rakudo #37 "BristolBath"        (tadzik)
+  2011-02-17   Rakudo #38 "Toulouse"           (arnsholt)
 
-=head2 Planned 2010 releases
+=head2 Planned 2011 releases
 
 Dates are based on Parrot's expected release schedule.
 
-  2010-07-22   Rakudo #31 "Atlanta"            (Coke)
-  2010-08-19   Rakudo #32                      (mathw)
-  2010-09-23   Rakudo #33                      -vacant-
-  2010-10-21   Rakudo #34                      -vacant-
-  2010-11-18   Rakudo #35                      -vacant-
-  2010-12-23   Rakudo #36                      -vacant-
+  2011-03-17   Rakudo #39                      (jdhore)
+  2011-04-21   Rakudo #40                      -vacant-
+  2011-05-19   Rakudo #41                      -vacant-
+  2011-06-23   Rakudo #42                      -vacant-
+  2011-07-21   Rakudo #43                      -vacant-
+  2011-08-18   Rakudo #44                      -vacant-
+  2011-09-22   Rakudo #45                      -vacant-
+  2011-10-20   Rakudo #46                      -vacant-
+  2011-11-17   Rakudo #47                      -vacant-
+  2011-12-22   Rakudo #48                      -vacant-
 
 =head2 Suggested .pm group names for future releases
 
-  BristolBath.pm
-  Milan.pm
+ (none yet)
 
 More names can be gotten from L<http://www.pm.org> if you 
 can't think of one with any particular significance to Perl 
-6 or Rakudo
+6 or Rakudo.
 
 =head2 Steps to create a release (for release managers)
 
@@ -59,7 +70,7 @@ days after a Parrot monthly release.
 
 =item 1.
 
-A few days before the Parrot release, it's a good idea to:
+A few days before the Parrot release, it's a good idea to...
 
 =over 4
 
@@ -73,7 +84,7 @@ release name, etc.
 
 Verify that the Parrot trunk head is able to build Rakudo
 and run the spectest suite. Also check the smolder reports
-at L<http://tinyurl.com/rakudosmoke>.
+at L<http://smolder.parrot.org/app/projects/smoke_reports/5>.
 
 =item *
 
@@ -96,10 +107,10 @@ the release announcement).
 =item 2.
 
 Once Parrot issues its monthly release, edit Rakudo's
-build/PARROT_REVISION file to contain the subversion revision
-number and release number corresponding to Parrot's monthly
-release.  For example, for June 2009 PARROT_REVISION file
-contained "39599 1.3.0".  As always, test to make sure Rakudo
+build/PARROT_REVISION file to contain the C<git describe --tags> output
+and release number corresponding to Parrot's monthly
+release.  For example, for November 2010 PARROT_REVISION file
+contained "RELEASE_2_10_1 2.10.0".  As always, test to make sure Rakudo
 still builds and passes its tests.  Once build/PARROT_REVISION
 has been set to the Parrot release, it must not be changed until
 after the Rakudo release.  In other words, we want each
@@ -111,6 +122,20 @@ the immediately prior release of Parrot.
 The short period following the Parrot release until the
 Rakudo release is generally intended for fixing bugs,
 updating documentation, and so on.
+
+=item 3.
+
+Update Rakudo's leap-second tables:
+
+  $ perl tools/update-tai-utc.pl src/core/tai-utc.pm
+
+If a new leap second has been announced, F<tai-utc.pm> will be modified, so
+commit the new version:
+
+  $ git commit src/core/tai-utc.pm
+
+But probably there won't be any new leap seconds, in which case the file
+will be unchanged.
 
 =item 4.
 
@@ -129,19 +154,6 @@ in which the new release is significant.  If possible, also give
 some small details about the choice of release name.  (If the
 details are a bit lengthy, this can often best be done as a separate
 section at the bottom of the announcement.)
-
-The release announcement has a bullet for passing spectests and the
-percentage of the available spectest suite that's passing.  To get
-the number of available tests, look at "docs/spectest-progress.csv".
-If it hasn't been updated recently, use "git log docs/spectest-progress.csv"
-to find out who has been updating it and seek out this person for an
-update. You can also run F<tools/test_summary.pl> to obtain the latest data.
-To get the total number of available spectests, the tool C<ack> (see
-L<http://search.cpan.org/dist/ack/>) has to be installed and be found in
-C<$PATH>.
-
-As of this writing, there's not a publicly available tool to
-update spectest-progress.csv or to count tests that won't run.
 
 Include a list of contributors since the last release in the announcement.
 You can get an automatically generated list by running
@@ -163,53 +175,49 @@ you find any steps that are missing.
 
 =item 7.
 
-Also, update the settings of $release and $copyright_year near
-the top of build/gen_version_pir.pl.  This sets the beginning
-of the output of perl6 -v or perl6 --version.  If this is a
-monthly or final release, make sure $release says so.
-
-  $ git commit build/gen_version_pir.pl
-
-=item 8.
-
 Make sure everything compiles and runs from a known clean state:
 
   $ make realclean
   $ perl Configure.pl --gen-parrot
   $ make
   $ make test
-  $ make spectest
   $ make stresstest
 
 Continue adjusting things until make spectest passes as expected.
 Often this means fixing a bug, fudging a test, or (temporarily?)
-commenting out a test file in t/spectest.data .  Use your best 
+commenting out a test file in t/spectest.data .  Use your best
 judgment or ask others if uncertain what to do here.
 
-=item 9.
+=item 7.5
+
+Enter the new version into the F<VERSION> file, and commit the changes:
+
+  $ echo 2010.09 > VERSION
+  $ git commit -m '[release] bump VERSION' VERSION
+
+=item 8.
 
 Make sure any locally modified files have been pushed back to github.
 
   $ git status
   $ git push
 
-=item 10.
+=item 9.
 
 Create a tarball by entering C<make release VERSION=YYYY.MM>,
 where YYYY.MM is the month for which the release is being made.
 This will create a tarball file named <rakudo-YYYY.MM.tgz>.
 
-B<Caution>: this steps removes your C<t/spec> directory and all files
-contained therein, and replaces it by a fresh svn export. So please make a
-backup if you have any important data in there.
+B<Caution>: this steps removes any untracked files in F<t/spec>.
+So please make a backup if you have any important data in there.
 
-=item 11.
+=item 10.
 
 Unpack the tar file into another area, and test that it
 builds and runs properly.  If there are any problems,
 fix them and go back to step 7.
 
-=item 12.
+=item 11.
 
 Tag the release by its release month ("MMMM.YY") and its code name.
 
@@ -217,41 +225,29 @@ Tag the release by its release month ("MMMM.YY") and its code name.
   $ git tag -a -m"tag release #nn" CODENAME   # e.g., "Bratislava"
   $ git push --tags
 
-=item 13.
+=item 12.
 
 Upload the release tarball to github's download area at
 L<http://github.com/rakudo/rakudo/downloads>.
 
+=item 13.
+
+To avoid public confusion with Rakudo Star releases that will 
+follow a few days after each compiler release, we now publish 
+compiler release announcements ONLY to perl6-compiler@perl.org.  
+(We may restart widespread announcements of compiler releases 
+once they are known, or we may begin publishing a single
+announcement for both.)
+
 =item 14.
-
-Update the setting of $release again, near the top of
-build/gen_version_pir.pl.  Have it state that this a
-development version, based on [the name and date of the
-release you just pushed], evolving towards [the name and
-target date of the next release.]
-
-  $ git commit build/gen_version_pir.pl
-
-Push this back to github.
-
-  $ git status
-  $ git push
-
-=item 15.
-
-Publish the release announcement (from #5) to appropriate
-locations, including rakudo.org, use.perl, perl6-language,
-perl6-announce, perl6-users, and others.
-
-=item 16.
 
 Update the Wikipedia entry at L<http://en.wikipedia.org/wiki/Rakudo>.
 
-=item 17.
+=item 15.
 
 Promote the release anywhere else you think appropriate.
 
-=item 18.
+=item 16.
 
 You're done!  Celebrate with the appropriate amount of fun.
 
@@ -259,7 +255,7 @@ You're done!  Celebrate with the appropriate amount of fun.
 
 =head1 COPYRIGHT
 
-Copyright (C) 2009-2010, The Perl Foundation.
+Copyright (C) 2009-2011, The Perl Foundation.
 
 =cut
 

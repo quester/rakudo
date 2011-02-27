@@ -33,13 +33,7 @@ method bind_target($bind_target?) {
 
 # Adds a parameter to the signature.
 method add_parameter($new_entry) {
-    my @entries := self.entries;
-    if $new_entry.var_name eq '$_' {
-        @entries.unshift($new_entry); # Always comes first, e.g. before slurpies.
-    }
-    else {
-        @entries.push($new_entry);
-    }
+    self.entries.push($new_entry);
 }
 
 
@@ -312,13 +306,13 @@ method ast($low_level?) {
         my $names := $null_reg;
         if +@($_.names) {
             my $pir := "    %r = root_new ['parrot'; 'ResizableStringArray']\n";
-            for @($_.names) { $pir := $pir ~ '    push %r, unicode:"' ~ ~$_ ~ "\"\n"; }
+            for @($_.names) { $pir := $pir ~ '    push %r, utf8:"' ~ ~$_ ~ "\"\n"; }
             $names := PAST::Op.new( :inline($pir) );
         }
         my $type_captures := $null_reg;
         if +@($_.type_captures) {
             my $pir := "    %r = root_new ['parrot'; 'ResizableStringArray']\n";
-            for @($_.type_captures) { $pir := $pir ~ '    push %r, unicode:"' ~ ~$_ ~ "\"\n"; }
+            for @($_.type_captures) { $pir := $pir ~ '    push %r, utf8:"' ~ ~$_ ~ "\"\n"; }
             $type_captures := PAST::Op.new( :inline($pir) );
         }
 

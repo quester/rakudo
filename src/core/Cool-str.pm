@@ -15,16 +15,26 @@ augment class Cool {
     }
 
     our multi method chomp() is export {
-        if self ~~ /\x0d\x0a$/ {
-            self.substr(0, self.chars - 2);
-        } elsif self ~~ /\x0a$/ {
-            self.substr(0, self.chars - 1);
-        } else {
-            self;
+        # in PIR for speed
+        Q:PIR {
+            $P0 = find_lex 'self'
+            $S0 = $P0
+            unless $S0 > '' goto done
+            $I0 = ord $S0, -1
+            unless $I0 == 10 goto done
+            $S0 = chopn $S0, 1
+            unless $S0 > '' goto done
+            $I0 = ord $S0, -1
+            unless $I0 == 13 goto done
+            $S0 = chopn $S0, 1
+          done:
+            %r = new ['Str']
+            assign %r, $S0
         }
     }
 
-    multi method subst($matcher, $replacement, :$samecase, *%options) {
+    multi method subst($matcher, $replacement,
+                       :ii(:$samecase), :ss(:$samespace), *%options) {
         my @matches = self.match($matcher, |%options);
         return self unless @matches;
         return self if @matches == 1 && !@matches[0];
@@ -33,8 +43,9 @@ augment class Cool {
         for @matches -> $m {
             $result ~= self.substr($prev, $m.from - $prev);
 
-	    my $real_replacement = ~($replacement ~~ Callable ?? $replacement($m) !! $replacement);
-	    $real_replacement    = $real_replacement.samecase(~$m) if $samecase;
+            my $real_replacement = ~($replacement ~~ Callable ?? $replacement($m) !! $replacement);
+            $real_replacement    = $real_replacement.samecase(~$m) if $samecase;
+            $real_replacement    = $real_replacement.samespace(~$m) if $samespace;
             $result ~= $real_replacement;
             $prev = $m.to;
         }
@@ -44,21 +55,22 @@ augment class Cool {
     }
 
     multi method comb(Regex $matcher = /./, $limit = *, :$match) {
+        my $self-string = ~self;
         my $c = 0;
         my $l = $limit ~~ ::Whatever ?? Inf !! $limit;
-        gather while $l > 0 && (my $m = self.match($matcher, :c($c))) {
+        gather while $l > 0 && (my $m = $self-string.match($matcher, :c($c))) {
             if $match {
                 my $m-clone = $m;
                 take $m-clone;
             } else {
                 take ~$m;
             }
-            $c = $m.to == $c ?? $c + 1 !! $m.to;
+            $c = $m.from == $m.to ?? $m.to + 1 !! $m.to;
             --$l;
         }
     }
 
-    multi method samecase($pattern) is export {
+    multi method samecase(Cool $pattern) is export {
         my $result = '';
         my $p = '';
         my @pattern = $pattern.comb;
@@ -74,6 +86,24 @@ augment class Cool {
         }
         $result;
     }
+
+    method samespace($other as Str) {
+        my @pieces = self.split(/\s+/);
+        my @new_spaces = $other.comb(/\s+/, @pieces-1);
+
+        my @new = @pieces[0..^@new_spaces] Z @new_spaces;
+
+        if @new_spaces < @pieces-1 {
+            my $remainder = self ~~ m:nth(@pieces-1)/\s+/;
+            @new.push(self.substr($remainder.from-1));
+        }
+        else {
+            @new.push(@pieces[*-1]);
+        }
+
+        return @new.join;
+    }
+
 
     multi method split(Regex $matcher, $limit = *, :$all) {
         my $c = 0;
@@ -105,7 +135,7 @@ augment class Cool {
                         $c++;
                     } else {
                         my $m = self.index($match-string, $c);
-                        last if $m.notdef; # CHEAT, but the best I can do for now
+                        last unless $m.defined; # CHEAT, but the best I can do for now
                         take self.substr($c, $m - $c);
                         take $match-string if $all;
                         $c = $m + $match-string.chars;
@@ -131,7 +161,79 @@ augment class Cool {
             return Mu;
         }
 
-        pir::substr(self, $start, $len);
+        ~pir::substr(self, $start, $len);
+    }
+
+    my class LSM {
+        has Cool $!source is readonly;
+        has      @!substitutions;
+
+        has Int  $!index = 0;
+        has Int  $!next_match;
+        has      $!next_substitution;
+        has      $!substitution_length;
+
+        has Str  $.unsubstituted_text;
+        has Str  $.substituted_text;
+
+        method add_substitution($key, $value) {
+            push @!substitutions, $key => $value;
+        }
+
+        submethod compare_substitution($substitution, Int $pos, Int $length) {
+            if $!next_match > $pos
+               || $!next_match == $pos && $!substitution_length < $length {
+
+                $!next_match = $pos;
+                $!substitution_length = $length;
+                $!next_substitution = $substitution;
+            }
+        }
+
+        multi submethod triage_substitution($_ where { .key ~~ Regex }) {
+            my $key = .key;
+            return unless $!source.substr($!index) ~~ $key;
+            self.compare_substitution($_, $!index + $/.from, $/.to - $/.from);
+        }
+
+        multi submethod triage_substitution($_ where { .key ~~ Cool }) {
+            return unless defined index($!source, .key, $!index);
+            self.compare_substitution($_,
+                                      index($!source, .key, $!index),
+                                      .key.chars);
+        }
+
+        multi submethod triage_substitution($_) {
+            die "Don't know how to handle a {.WHAT} as a substitution key";
+        }
+
+        multi submethod increment_index(Regex $s) {
+            $!source.substr($!index) ~~ $s;
+            $!index = $!next_match + $/.chars;
+        }
+
+        multi submethod increment_index(Cool $s) {
+            $!index = $!next_match + $s.chars;
+        }
+
+        method next_substitution() {
+            $!next_match = $!source.chars;
+
+            for @!substitutions {
+                self.triage_substitution($_);
+            }
+
+            $!unsubstituted_text
+                = $!source.substr($!index, $!next_match - $!index);
+            if defined $!next_substitution {
+                my $result = $!next_substitution.value;
+                $!substituted_text
+                    = $result ~~ Callable ?? $result() !! $result;
+                self.increment_index($!next_substitution.key);
+            }
+
+            return $!next_match < $!source.chars;
+        }
     }
 
     multi method trans(*@changes) {
@@ -146,62 +248,40 @@ augment class Cool {
             }
         }
 
-        my %c;
-        my %prefixes;
+        my $lsm = LSM.new(:source(self));
         for (@changes) -> $p {
-            die "$p.perl is not a Pair" unless $p ~~ Pair;
-            my @from = expand $p.key;
-            my @to   = expand $p.value;
-#            warn "Substitution is longer than pattern\n" if @to > @from;
-            if @to {
-                @to = @to xx ceiling(@from / @to);
-            } else {
-                @to = '' xx @from;
+            die "$p.perl() is not a Pair" unless $p ~~ Pair;
+            if $p.key ~~ Regex {
+                $lsm.add_substitution($p.key, $p.value);
             }
-            for @from Z @to -> $f, $t {
-                if %c.exists($f) && %c{$f} ne $t {
-#                    warn "Ambiguous transliteration rule for '$f'; "
-#                         ~ "using the first one (transliteration to '$t')";
+            elsif $p.value ~~ Callable {
+                my @from = expand $p.key;
+                for @from -> $f {
+                    $lsm.add_substitution($f, $p.value);
+                }
+            }
+            else {
+                my @from = expand $p.key;
+                my @to   = expand $p.value;
+                if @to {
+                    @to = @to xx ceiling(@from / @to);
                 } else {
-                    if $f.chars > 1 {
-                        %prefixes{$f.substr(0, 1)} //= [];
-                        %prefixes{$f.substr(0, 1)}.push($f);
-                    }
-                    %c{$f} = $t;
+                    @to = '' xx @from;
+                }
+                for @from Z @to -> $f, $t {
+                    $lsm.add_substitution($f, $t);
                 }
             }
         }
 
-        # should be replaced by a proper trie implementation
-        # at some point
-        for %prefixes.keys {
-            %prefixes{$_}.=sort({-.chars});
+        my $r = "";
+        while $lsm.next_substitution {
+            $r ~= $lsm.unsubstituted_text ~ $lsm.substituted_text;
         }
+        $r ~= $lsm.unsubstituted_text;
 
-        my @res;
-        my $l = $.chars;
-        loop (my $i = 0; $i < $l; ++$i) {
-            my $c = $.substr($i, 1);
-            my $success = 0;
-            if %prefixes.exists($c) {
-                for %prefixes{$c}.list {
-                    if self.substr($i, .chars) eq $_ {
-                        @res.push: %c{$_};
-                        $success = 1;
-                        $i += .chars - 1;
-                        last;
-                    }
-                }
-            }
-            unless $success {
-                @res.push: %c.exists($c)
-                            ?? %c{$c}
-                            !! $c;
-            }
-        }
-        @res.join: '';
+        return $r;
     }
-
 
     # S32/Str says that this should always return a StrPos object
     our Int multi method index($substring, $pos = 0) is export {
@@ -253,7 +333,7 @@ augment class Cool {
                            :g(:$global),
                            :pos(:$p),
                            :$x,
-                           :$nth,
+                           :st(:nd(:rd(:th(:$nth)))),
                            :ov(:$overlap)) {
         if $continue ~~ Bool {
             note ":c / :continue requires a position in the string";
@@ -303,8 +383,13 @@ augment class Cool {
                 } else {
                     if $m.to == $m.from {
                         %opts<c> = $m.to + 1;
+                        if $p.defined {
+                            warn "multiple matches with :p terminated by zero-width match\n";
+                            last;
+                        }
                     } else {
                         %opts<c> = $m.to;
+                        %opts<p> = $m.to if $p.defined;
                     }
                 }
 
@@ -323,14 +408,16 @@ augment class Cool {
     }
 
     our multi method ord() {
-        given self.chars {
-            when 0  { fail('Can not take ord of empty string'); }
-            when 1  { pir::box__PI(pir::ord__IS(self)); }
-            default {
-                        gather for self.comb {
-                            take pir::box__PI(pir::ord__IS($_))
-                        }
-                    }
+        if self eq "" {
+            fail('Can not take ord of empty string');
+        }
+
+        pir::box__PI(pir::ord__IS(self));
+    }
+
+    our multi method ords() {
+        gather for self.comb {
+            take $_.ord;
         }
     }
 
@@ -353,7 +440,12 @@ augment class Cool {
     }
 
     multi method flip() is export {
-        (~self).split('').reverse().join;
+        ~ Q:PIR {
+            $P0 = box ''
+            $P1 = find_lex 'self'
+            $S0 = $P0.'reverse'($P1)
+            %r  = box $S0
+        }
     }
 
     # Not yet spec'd, I expect it will be renamed
@@ -382,8 +474,12 @@ augment class Cool {
         self.trim-leading.trim-trailing;
     }
 
-    multi method words(Int $limit = *) {
-        self.comb( / \S+ /, $limit );
+    multi method words(Str $input: Int $limit = *) {
+        $input.comb( / \S+ /, $limit );
+    }
+
+    our multi method lines(Str $input: Int $limit = Inf) {
+        $input.comb( / ^^ \N* /, $limit );
     }
 
     our Str multi method uc() {
@@ -399,28 +495,25 @@ augment class Cool {
         try {
             $result = pir::sprintf__SSP(~self, (|@args)!PARROT_POSITIONALS);
         }
-        $! ?? fail( "Insufficient arguments supplied to sprintf") !! $result
+        $! ?? die 'Not enough arguments supplied for the given format string' !! $result
+    }
+
+    method IO() {
+        ::IO.new(path => ~self);
     }
 }
 
-multi sub ord($string) {
-    $string.ord;
-}
-
-proto ord($string) {
-    $string.ord;
-}
+proto ord($string) { $string.ord; }
+proto ords($string) { $string.ords; }
 
 our Str proto sub infix:<x>($str, $n) {
     $n > 0 ?? ~(pir::repeat__SSI($str, $n)) !!  ''
 }
 
 our multi sub infix:<cmp>($a, $b) {
-    if $a eq $b {
-        0;
-    } else {
-        $a lt $b ?? -1 !! 1;
-    }
+    return Order::Increase if $a eqv -Inf || $b eqv Inf;
+    return Order::Decrease if $a eqv Inf || $b eqv -Inf;
+    $a lt $b ?? Order::Increase !! ($a gt $b ?? Order::Decrease !! Order::Same);
 }
 
 our multi sub infix:<leg>($a, $b) {
@@ -429,6 +522,10 @@ our multi sub infix:<leg>($a, $b) {
 
 multi split ( $delimiter, $input, $limit = *, :$all ) {
     $input.split($delimiter, $limit, :$all);
+}
+
+our List multi comb ( Regex $matcher, Str $input, Int $limit = Inf ) {
+    $input.comb($matcher , $limit );
 }
 
 multi sub sprintf($str as Str, *@args) {

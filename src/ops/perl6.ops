@@ -1,5 +1,4 @@
 /*
- * $Id$
  * Copyright (C) 2008-2010, The Perl Foundation.
  */
 
@@ -11,6 +10,7 @@ BEGIN_OPS_PREAMBLE
 #include "pmc_object.h"
 #include "pmc_class.h"
 #include "pmc_callcontext.h"
+#include "pmc_sub.h"
 #include "../pmc/pmc_p6lowlevelsig.h"
 #include "../binder/bind.h"
 
@@ -24,6 +24,10 @@ static INTVAL or_id  = 0;
 static INTVAL lls_id = 0;
 static INTVAL obj_id = 0;
 static INTVAL p6o_id = 0;
+
+static STRING *LLSIG_ATTR_str;
+static STRING *BANG_LLSIG_str;
+static STRING *DISPATCH_JUNCTION_str;
 
 /* Plus a function pointer to the binder. */
 typedef INTVAL (*bind_llsig_func_type) (PARROT_INTERP, PMC *lexpad,
@@ -44,11 +48,16 @@ Does various setup tasks on behalf of all of the other dynops.
 */
 inline op rakudo_dynop_setup() :base_core {
     /* Look up some type IDs. */
-    p6s_id = pmc_type(interp, string_from_literal(interp, "Perl6Scalar"));
-    or_id  = pmc_type(interp, string_from_literal(interp, "ObjectRef"));
-    lls_id = pmc_type(interp, string_from_literal(interp, "P6LowLevelSig"));
-    p6o_id = pmc_type(interp, string_from_literal(interp, "P6opaque"));
+    p6s_id = pmc_type(interp, Parrot_str_new(interp, "Perl6Scalar", 0));
+    or_id  = pmc_type(interp, Parrot_str_new(interp, "ObjectRef", 0));
+    lls_id = pmc_type(interp, Parrot_str_new(interp, "P6LowLevelSig", 0));
+    p6o_id = pmc_type(interp, Parrot_str_new(interp, "P6opaque", 0));
     obj_id = enum_class_Object;
+
+    BANG_LLSIG_str        = Parrot_str_new_constant(interp, "!llsig");
+    LLSIG_ATTR_str        = Parrot_str_new_constant(interp, "$!llsig");
+    DISPATCH_JUNCTION_str = Parrot_str_new_constant(interp,
+                                "!DISPATCH_JUNCTION_SINGLE");
 
     /* Create dummy low level sig op and use its get_pointer to get a pointer
      * to the signature binder. */
@@ -126,7 +135,7 @@ inline op rebless_subclass(in PMC, in PMC) :base_core {
          * in the end we will end up with just as many PMCs existing. */
         PMC * const temp  = mem_allocate_typed(PMC);
         PMC * const proxy = VTABLE_get_attr_keyed(interp, new_ins, current_class,
-                string_from_literal(interp, "proxy"));
+                Parrot_str_new(interp, "proxy", 0));
         Parrot_block_GC_mark(interp);
 
         /* Using memcpy here may trigger gcc optimizations, which at this point
@@ -145,9 +154,6 @@ inline op rebless_subclass(in PMC, in PMC) :base_core {
         for (i = 0; i < new_attribs; i++)
             VTABLE_set_pmc_keyed_int(interp, PARROT_OBJECT(value)->attrib_store,
                 i, pmc_new(interp, enum_class_Undef));
-
-        /* And make sure the new object is of the right type. */
-        new_ins->vtable = interp->vtables[p6o_id];
     }
     else if ((value->vtable->base_type != enum_class_Object && value->vtable->base_type != p6o_id)
             || current_class->vtable->base_type != enum_class_Class) {
@@ -227,7 +233,7 @@ inline op x_is_uprop(out INT, in STR, in STR, in INT) :base_core {
         goto NEXT();
     }
 
-    ord = string_ord(interp, $3, $4);
+    ord = Parrot_str_indexed(interp, $3, $4);
     cstr = Parrot_str_to_cstring(interp, $2);
 
     /* try block tests */
@@ -308,7 +314,7 @@ nextsame need.
 */
 inline op get_next_candidate_info(out PMC, out PMC, out PMC) :base_core {
     PMC     *ctx         = Parrot_pcc_get_caller_ctx(interp, CURRENT_CONTEXT(interp));
-    STRING  *name        = string_from_literal(interp, "__CANDIDATE_LIST__");
+    STRING  *name        = Parrot_str_new(interp, "__CANDIDATE_LIST__", 0);
     PMC     *last_lexpad = PMCNULL;
     PMC     *last_sub    = PMCNULL;
 
@@ -509,7 +515,7 @@ inline op set_llsig_elem(in PMC, in INT, in STR, in INT, inout PMC, inout PMC, i
 
             /* Also need to do fixups on the nominal type. */
             if (!PMC_IS_NULL($5)) {
-                PMC *refined = VTABLE_getprop(interp, $5, string_from_literal(interp, "subtype_realtype"));
+                PMC *refined = VTABLE_getprop(interp, $5, Parrot_str_new(interp, "subtype_realtype", 0));
                 if (PMC_IS_NULL(refined)) {
                     /* It's not some subtype, we're fine. */
                     element->nominal_type = $5;
@@ -524,7 +530,7 @@ inline op set_llsig_elem(in PMC, in INT, in STR, in INT, inout PMC, inout PMC, i
             }
             else {
                 element->nominal_type = Parrot_ns_find_namespace_global(interp, Parrot_get_ctx_HLL_namespace(interp),
-                        string_from_literal(interp, "Mu"));
+                        Parrot_str_new(interp, "Mu", 0));
             }
 
             goto NEXT();
@@ -617,7 +623,7 @@ inline op bind_llsig(in PMC) :base_core {
     if (!PObj_flag_TEST(P6S_ALREADY_BOUND, ctx)) {
         PMC *lexpad         = Parrot_pcc_get_lex_pad(interp, ctx);
         PMC *sub            = Parrot_pcc_get_sub(interp, ctx);
-        PMC *llsig          = VTABLE_getprop(interp, sub, string_from_literal(interp, "$!llsig"));
+        PMC *llsig          = VTABLE_getprop(interp, sub, LLSIG_ATTR_str);
         INTVAL noms_checked = PObj_flag_TEST(P6S_ALREADY_CHECKED, ctx);
         STRING *error       = NULL;
         INTVAL bind_error;
@@ -631,7 +637,7 @@ inline op bind_llsig(in PMC) :base_core {
         /* Ensure we actually have a signature; if not, try to lazily generate
          * it. */
         if (PMC_IS_NULL(llsig)) {
-            PMC *sig_meth    = VTABLE_find_method(interp, sub, string_from_literal(interp, "!llsig"));
+            PMC *sig_meth    = VTABLE_find_method(interp, sub, BANG_LLSIG_str);
             Parrot_ext_call(interp, sig_meth, "P->P", sub, &llsig);
         }
 
@@ -642,7 +648,7 @@ inline op bind_llsig(in PMC) :base_core {
         if (!bind_error) {
             /* Re-instate anything we may have damaged. */
             CURRENT_CONTEXT(interp) = ctx;
-            interp->current_cont = saved_ccont;
+            interp->current_cont    = saved_ccont;
             Parrot_pcc_set_signature(interp, ctx, saved_sig);
             Parrot_pcc_set_pc(interp, ctx, current_pc);
             goto NEXT();
@@ -652,8 +658,8 @@ inline op bind_llsig(in PMC) :base_core {
             if (bind_error == BIND_RESULT_JUNCTION) {
                 /* Find dispatcher and call it. */
                 PMC *returns = Parrot_pmc_new(interp, enum_class_CallContext);
-                PMC *dispatcher = Parrot_ns_find_namespace_global(interp, Parrot_get_ctx_HLL_namespace(interp),
-                        string_from_literal(interp, "!DISPATCH_JUNCTION_SINGLE"));
+                PMC *dispatcher = Parrot_ns_find_namespace_global(interp, Parrot_get_ctx_HLL_namespace(interp), DISPATCH_JUNCTION_str);
+
                 opcode_t *next;
                 PMC *junc_result, *caller_sig;
                 Parrot_ext_call(interp, dispatcher, "PP->P", sub, $1, &junc_result);
@@ -708,6 +714,54 @@ method named $3 instead of throwing an exception.
 */
 inline op find_method_null_ok(out PMC, in PMC, in STR) :base_core {
     $1 = VTABLE_find_method(interp, $2, $3);
+    goto NEXT();
+}
+
+
+/*
+
+=item fixup_outer_ctx(inout PMC)
+
+=cut
+
+*/
+inline op fixup_outer_ctx(inout PMC) :base_core {
+    PMC *cur_ctx = CURRENT_CONTEXT(interp);
+    if ($1->vtable->base_type == enum_class_CallContext) {
+        Parrot_pcc_set_outer_ctx(interp, $1, cur_ctx);
+        goto NEXT();
+    }
+    else {
+        opcode_t *handler =  Parrot_ex_throw_from_op_args(interp, NULL,
+                EXCEPTION_INVALID_OPERATION, "fixup_outer_ctx only valid on a context");
+        goto ADDRESS(handler);
+    }
+}
+
+
+/*
+
+=item encodelocaltime(out INT, in PMC)
+
+The inverse of C<decodelocaltime>.
+
+=cut
+
+*/
+inline op encodelocaltime(out INT, in PMC) :base_core {
+    struct tm tm;
+
+    tm.tm_sec  = VTABLE_get_integer_keyed_int(interp, $2, 0);
+    tm.tm_min  = VTABLE_get_integer_keyed_int(interp, $2, 1);
+    tm.tm_hour = VTABLE_get_integer_keyed_int(interp, $2, 2);
+    tm.tm_mday = VTABLE_get_integer_keyed_int(interp, $2, 3);
+    tm.tm_mon  = VTABLE_get_integer_keyed_int(interp, $2, 4) - 1;
+    tm.tm_year = VTABLE_get_integer_keyed_int(interp, $2, 5) - 1900;
+    /* We needn't bother setting tm_wday or tm_yday, since mktime
+    is required to ignore them. */
+    tm.tm_isdst = VTABLE_get_integer_keyed_int(interp, $2, 8);
+
+    $1 = mktime(&tm);
     goto NEXT();
 }
 

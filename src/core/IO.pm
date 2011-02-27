@@ -3,6 +3,9 @@ class IO is Cool {
     has $!ins;
     has $.autoflush is rw;
 
+    has $.path;
+    has $.stat = ::IO::Stat.new(path => $.path);
+
     multi method close() is export {
         try {
             ?$!PIO.close()
@@ -135,6 +138,76 @@ class IO is Cool {
     multi method t() {
         $!PIO.isatty;
     }
+
+    # file test operations
+    multi method d() {
+        self.e ?? $.stat.isdir !! Bool;
+    }
+    multi method e() {
+        $.stat.exists;
+    }
+    multi method f() {
+        self.e ?? !$.stat.isdir !! Bool;
+    }
+
+    multi method s() {
+        self.e ?? $.stat.size !! Any;
+    }
+
+    multi method l() {
+        my $fn = $.path;
+        ? Q:PIR{
+            .local pmc filename, file
+            filename = find_lex '$fn'
+            $S0 = filename
+
+            file = root_new ['parrot';'File']
+            $I0 = file.'is_link'($S0)
+            %r = box $I0
+        }
+    }
+
+    multi method z() {
+        $.e && $.s == 0;
+    }
+
+    multi method created() { ::Instant.from-posix($.stat.createtime) }
+    multi method modified() { ::Instant.from-posix($.stat.modifytime) }
+    multi method accessed() { ::Instant.from-posix($.stat.accesstime) }
+    multi method changed() { ::Instant.from-posix($.stat.changetime) }
+
+    multi method move($dest as Str) {
+        try {
+            pir::new__PS('OS').rename($.path, $dest);
+        }
+        $! ?? fail($!) !! True
+    }
+
+    multi method chmod($mode as Int) {
+        try {
+            pir::new__PS('OS').chmod($.path, $mode);
+        }
+        $! ?? fail($!) !! True
+    }
+
+    multi method copy($dest as Str) {
+        try {
+            pir::new__PS('File').copy($.path, $dest);
+        }
+        $! ?? fail($!) !! True
+    }
+
+    multi method link($dest as Str, Bool :$hard = False) {
+        try {
+            if $hard {
+                pir::new__PS('OS').link($.path, $dest);
+            }
+            else {
+                pir::new__PS('OS').symlink($.path, $dest);
+            }
+        }
+        $! ?? fail($!) !! True
+    }
 }
 
 multi sub get(IO $filehandle = $*ARGFILES) { $filehandle.get };
@@ -170,7 +243,7 @@ sub open($filename, :$r, :$w, :$a, :$bin) {
     unless pir::istrue__IP($PIO) {
         fail("Unable to open file '$filename'");
     }
-    $PIO.encoding('utf8');
+    $PIO.encoding($bin ?? 'binary' !! 'utf8');
     IO.new(:$PIO)
 }
 
@@ -186,23 +259,10 @@ sub slurp($filename) {
 }
 
 sub unlink($filename) {
-    Q:PIR {
-        .local string filename_str
-        .local pmc filename_pmc, os
-        .local int status
-        filename_pmc = find_lex '$filename'
-        filename_str = filename_pmc
-        os = root_new ['parrot';'OS']
-        push_eh unlink_catch
-        os.'rm'(filename_str)
-        status = 1
-        goto unlink_finally
-      unlink_catch:
-        status = 0
-      unlink_finally:
-        pop_eh
-        %r = box status
+    try {
+        pir::new__PS('OS').rm($filename);
     }
+    $! ?? fail($!) !! True
 }
 
 # CHEAT: This function is missing a bunch of arguments,
@@ -221,13 +281,13 @@ multi sub note(*@args) {
     $*ERR.say(@args);
 }
 
-multi sub dir($path as Str) {
+multi sub dir($path as Str = '.', Mu :$test = none('.', '..')) {
     Q:PIR {
         $P0 = find_lex '$path'
         $P1 = new ['OS']
         $P1 = $P1.'readdir'($P0)
         %r = '&infix:<,>'($P1 :flat)
-    }
+    }.map({~$_}).grep($test)
 }
 
 multi sub chdir($path as Str) {
@@ -237,7 +297,7 @@ multi sub chdir($path as Str) {
     $! ?? fail($!) !! True
 }
 
-multi sub mkdir($path as Str, $mode = 0) {
+multi sub mkdir($path as Str, $mode = 0o777) {
     try {
         pir::new__PS('OS').mkdir($path, $mode)
     }

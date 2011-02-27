@@ -1,8 +1,11 @@
-class Set does Associative {
+class Set is Iterable does Associative {
     # We could use a hash here, but right now hash keys coerce to Str,
     # so instead let's use an array and &uniq for the time being.
     has @!elems;
 
+    multi method new() {
+        self.bless: *;
+    }
     multi method new(@elems) {
         self.bless(self.CREATE, :elems( uniq @elems ));
     }
@@ -16,6 +19,10 @@ class Set does Associative {
         $set;
     }
 
+    method !STORE(\$args) {
+        die 'Sets are immutable, but you tried to modify one'
+    }
+
     sub contains(@array, $value) {
         for @array {
             if $value === $_ {
@@ -25,13 +32,23 @@ class Set does Associative {
         return False;
     }
 
-    method keys() { @!elems }
+    method keys() { { @^readonly-elems }(@!elems) }
     method values() { True xx +@!elems }
     method elems() { +@!elems }
     method exists($elem) { contains(@!elems, $elem) }
 
-    method Num() { +self.elems }
+    method at_key($key) {
+        contains(@!elems, $key);
+    }
+
     method Bool() { ?self.elems }
+    method Numeric() { +self.elems }
+    method Str() { self.perl }
+    method hash() { hash self.flat }
+    method flat() { @!elems Z=> True xx * }
+
+    method pick(*@args) { @!elems.pick: |@args }
+    method roll(*@args) { @!elems.roll: |@args }
 
     multi method union(@otherset) {
         self.new((@!elems, @otherset));
@@ -52,6 +69,13 @@ class Set does Associative {
     }
     multi method difference(@otherset) {
         self.new(grep { !contains(@otherset, $_) }, @!elems);
+    }
+
+    multi method symmetricdifference(%otherset) {
+        self.symmetricdifference(%otherset.keys);
+    }
+    multi method symmetricdifference(@otherset) {
+        self.difference(@otherset).union(Set.new(@otherset).difference(self));
     }
 
     multi method subsetorequal(@otherset) {
@@ -81,7 +105,11 @@ class Set does Associative {
     }
 
     method perl() {
-        'Set.new(' ~ join(', ', map { .perl }, @!elems) ~ ')';
+        'set(' ~ join(', ', map { .perl }, @!elems) ~ ')';
+    }
+
+    method iterator() {
+        @!elems.iterator;
     }
 }
 
@@ -99,6 +127,11 @@ our multi sub  infix:<(-)>(Set $a, %b) { $a.difference(%b) }
 our multi sub  infix:<(-)>(    %a, %b) { Set.new( %a).difference(%b) }
 our multi sub  infix:<(-)>(    @a, %b) { Set.new(|@a).difference(%b) }
 our multi sub  infix:<(-)>(    @a, @b) { Set.new(|@a).difference(@b) }
+
+our multi sub  infix:<(^)>(Set $a, %b) { $a.symmetricdifference(%b) }
+our multi sub  infix:<(^)>(    %a, %b) { Set.new( %a).symmetricdifference(%b) }
+our multi sub  infix:<(^)>(    @a, %b) { Set.new(|@a).symmetricdifference(%b) }
+our multi sub  infix:<(^)>(    @a, @b) { Set.new(|@a).symmetricdifference(@b) }
 
 our multi sub infix:<(<=)>(Set $a, %b) { $a.subsetorequal(%b) }
 our multi sub infix:<(<=)>(    %a, %b) { Set.new( %a).subsetorequal(%b) }
@@ -119,5 +152,7 @@ our multi sub  infix:«(>)»(Set $a, %b) { $a.superset(%b) }
 our multi sub  infix:«(>)»(    %a, %b) { Set.new( %a).superset(%b) }
 our multi sub  infix:«(>)»(    @a, %b) { Set.new(|@a).superset(%b) }
 our multi sub  infix:«(>)»(    @a, @b) { Set.new(|@a).superset(@b) }
+
+our sub set(*@args) { Set.new: |@args }
 
 # vim: ft=perl6

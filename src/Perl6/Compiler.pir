@@ -146,32 +146,41 @@ Perl6::Compiler - Perl6 compiler
     nqpproto.'parseactions'($P0)
     $P0 = getattribute nqpproto, '@cmdoptions'
     push $P0, 'parsetrace'
+    push $P0, 'c'
+    nqpproto.'addstage'('check_syntax', 'after'=>'past')
 
     true = get_hll_global ['Bool'], 'True'
 
     # Set up @*INC from $PERL6LIB, languages/perl6/lib and ~/.perl6/lib
     .local pmc env, interp, config
+    interp = getinterp
+    config = interp[.IGLOBALS_CONFIG_HASH]
     # Convert PERL6LIB first
     env = root_new ['parrot';'Env']
     $S0 = env['PERL6LIB']
-    $P0 = split ':', $S0
+
+    .local string sep, os
+    sep = ':'
+    os = config['osname']
+    ne os, 'MSWin32', perl6lib_split
+    sep = ';'
+  perl6lib_split:
+    $P0 = split sep, $S0
     # append ~/.perl6/lib
     $S0 = env['HOME']
     if $S0 goto have_home     # for users of unix-y systems
     # here only for those of a fenestral persuasion
     $S0 = env['HOMEDRIVE']
     $S1 = env['HOMEPATH']
-    concat $S0, $S1
+    $S0 = concat $S0, $S1
   have_home:
-    concat $S0, '/.perl6/lib'
+    $S0 = concat $S0, '/.perl6/lib'
     push $P0, $S0
     # append the installed Parrot languages/perl6/lib directory
-    interp = getinterp
-    config = interp[.IGLOBALS_CONFIG_HASH]
     $S0 = config['libdir']
     $S1 = config['versiondir']
-    concat $S0, $S1
-    concat $S0, '/languages/perl6/lib'
+    $S0 = concat $S0, $S1
+    $S0 = concat $S0, '/languages/perl6/lib'
     push $P0, $S0
     # append the current directory
     push $P0, '.'             # remove this when 'use lib' works fine
@@ -223,12 +232,48 @@ Perl6::Compiler - Perl6 compiler
     exit 0
 .end
 
+
+.sub 'pir' :method
+    .param pmc source
+    .param pmc adverbs         :slurpy :named
+    $P0 = compreg 'POST'
+    $S0 = $P0.'to_pir'(source, adverbs :flat :named)
+    $S0 = concat ".loadlib 'perl6_ops'\n", $S0
+    .return ($S0)
+.end
+
+
+.sub 'check_syntax' :method
+    .param pmc source
+    .param pmc adverbs         :slurpy :named
+    $I0 = adverbs['c']
+    unless $I0 goto no_check
+    say 'syntax OK'
+    exit 0
+  no_check:
+    .return ()
+.end
+    
+
 .sub 'version' :method
+    .local pmc interp, config, rev, version
+    interp = getinterp
+    config = interp[.IGLOBALS_CONFIG_HASH]
+    version = config['VERSION']
+    rev    = config['git_describe']
+
     say ''
     print 'This is Rakudo Perl 6, version '
-    say .RAKUDO_VERSION
+    print .RAKUDO_VERSION
+    print ' built on parrot '
+    print version
+  if null rev goto done_rev
+    print ' '
+    print rev
+  done_rev:
     say ''
-    say 'Copyright 2008-2010, The Perl Foundation'
+    say ''
+    say 'Copyright 2008-2011, The Perl Foundation'
     say ''
     exit 0
 .end

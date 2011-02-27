@@ -74,6 +74,7 @@ role Hash is EnumMap {
         if $has_previous {
             warn "Trailing item in Hash.push";
         }
+        return %(self);
     }
 
     # push a value onto a hash Objectitem, constructing an array if necessary
@@ -93,28 +94,15 @@ role Hash is EnumMap {
         return self.pairs;
     }
 
+    method hash() {
+        return self;
+    }
+
     multi method sort(&by = &infix:<cmp>) {
         self.pairs.sort(&by)
     }
-    multi method pick() {
-        my @weights = [\+] self.values;
-        my $value = @weights[*-1].rand;
-        return self.keys[0] if @weights[0] > $value;
-        my ($l, $r) = (0, @weights.elems-1);
-        my $middle = floor ($r + $l) / 2;
-        while $middle > $l {
-            if @weights[$middle] < $value {
-                $l = $middle;
-            }
-            else {
-                 $r = $middle;
-            }
-            $middle = floor ($r + $l) / 2;
-        }
-        self.keys[$r];
-    }
 
-    multi method pick($num is copy = 1, :$replace) {
+    multi method pick($num is copy = 1) {
         if ($num == 1) {
             my @weights = [\+] self.values;
             my $value = @weights[*-1].rand;
@@ -133,29 +121,49 @@ role Hash is EnumMap {
             return self.keys[$r];
         }
 
-        if $replace {
-            gather {
-                take self.pick() for ^$num;
-            }
-        } else {
-            my %copyHash = @.pairs.grep({ .value != 0});
-            gather {
-                while $num > 0 && %copyHash {
-                    take my $picked = %copyHash.pick();
-                    unless --%copyHash{$picked} {
-                        %copyHash.delete($picked);
-                    }
-                    $num--;
+        my %copyHash = @.pairs.grep({ .value != 0});
+        gather {
+            while $num > 0 && %copyHash {
+                take my $picked = %copyHash.pick();
+                unless --%copyHash{$picked} {
+                    %copyHash.delete($picked);
                 }
+                $num--;
             }
         }
     }
 
-    multi method pick(Whatever, :$replace) {
-        self.pick(Inf, :$replace);
+    multi method pick(Whatever) {
+        self.pick(Inf);
     }
 
+    multi method roll($num is copy = 1) {
+        if ($num == 1) {
+            my @weights = [\+] self.values;
+            my $value = @weights[*-1].rand;
+            return self.keys[0] if @weights[0] > $value;
+            my ($l, $r) = (0, @weights.elems-1);
+            my $middle = floor ($r + $l) / 2;
+            while $middle > $l {
+                if @weights[$middle] < $value {
+                    $l = $middle;
+                }
+                else {
+                     $r = $middle;
+                }
+                $middle = floor ($r + $l) / 2;
+            }
+            return self.keys[$r];
+        }
 
+        gather {
+            take self.roll() for ^$num;
+        }
+    }
+
+    multi method roll(Whatever) {
+        self.roll(Inf);
+    }
 }
 
 

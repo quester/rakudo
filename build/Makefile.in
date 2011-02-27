@@ -12,7 +12,7 @@ PARROT_SRC_DIR     = @srcdir@$(PARROT_VERSION)
 HAS_ICU            = @has_icu@
 
 CC            = @cc@
-CFLAGS        = @ccflags@ @cc_shared@ @cc_debug@ @ccwarn@ @cc_hasjit@ @gc_flag@
+CFLAGS        = @ccflags@ @cc_shared@ @cc_debug@ @ccwarn@ @gc_flag@
 EXE           = @exe@
 LD            = @ld@
 LDFLAGS       = @ldflags@ @ld_debug@
@@ -177,11 +177,13 @@ CORE_SOURCES = \
   src/core/operators.pm \
   src/glue/handles.pm \
   src/glue/subset.pm \
+  src/glue/enum.pm \
   src/cheats/trait-export.pm \
   src/cheats/num.pm \
   src/cheats/eval.pm \
   src/core/Mu.pm \
   src/core/Bool.pm \
+  src/core/Order.pm \
   src/core/Parcel.pm \
   src/core/Any.pm \
   src/core/Any-list.pm \
@@ -214,6 +216,7 @@ CORE_SOURCES = \
   src/core/IO/ArgFiles.pm \
   src/core/IO/Socket.pm \
   src/core/IO/Socket/INET.pm \
+  src/core/IO/Stat.pm \
   src/core/Parameter.pm \
   src/core/Signature.pm \
   src/core/Block.pm \
@@ -222,15 +225,15 @@ CORE_SOURCES = \
   src/core/Regex.pm \
   src/core/Junction.pm \
   src/core/Grammar.pm \
-  src/core/Substitution.pm \
   src/core/system.pm \
   src/cheats/process.pm \
-  src/core/Date.pm \
-  src/core/DateTime.pm \
+  src/core/tai-utc.pm \
+  src/core/Duration.pm \
+  src/core/Instant.pm \
+  src/core/Temporal.pm \
   src/core/Match.pm \
   src/core/Attribute.pm \
   src/core/CallFrame.pm \
-  src/core/LexPad.pm \
   src/core/Capture.pm \
   src/core/MAIN.pm \
   src/core/YOU_ARE_HERE.pm \
@@ -253,7 +256,9 @@ CLEANUPS = \
   $(PERL6_EXE) \
   perl6.c \
   perl6$(O) \
+  perl6_group.* \
   Test.pir \
+  rakudo_test_run.tar.gz \
   $(DYNEXT_DIR)/*$(LOAD_EXT) \
   src/gen/core.pm \
   src/gen/*.pir \
@@ -274,7 +279,7 @@ CLEANUPS = \
   $(OPS_DIR)/*.c \
   $(OPS_DIR)/*$(O) \
   $(OPS_DIR)/*$(LOAD_EXT) \
-  binder/*$(O) \
+  src/binder/*$(O) \
 
 # NOTE: eventually, we should remove --keep-exit-code and --fudge
 #       as the goal is that all tests must pass without fudge
@@ -284,7 +289,7 @@ HARNESS_WITH_FUDGE_JOBS = $(HARNESS_WITH_FUDGE) --jobs
 STAGESTATS = @stagestats@
 
 # the default target, TODO: make libraries in 'lib' a variable.
-all: $(PERL6_EXE) Test.pir lib/DateTime/strftime.pir
+all: $(PERL6_EXE) Test.pir
 
 # the install target
 install: all
@@ -292,11 +297,6 @@ install: all
 	$(CP)     perl6.pbc           $(DESTDIR)$(PERL6_LANG_DIR)
 	$(CP)     Test.pm             $(DESTDIR)$(PERL6_LANG_DIR)/lib
 	$(CP)     Test.pir            $(DESTDIR)$(PERL6_LANG_DIR)/lib
-	$(CP)     lib/*.pm            $(DESTDIR)$(PERL6_LANG_DIR)/lib
-	$(CP)     lib/*.pir           $(DESTDIR)$(PERL6_LANG_DIR)/lib
-	$(MKPATH)                     $(DESTDIR)$(PERL6_LANG_DIR)/lib/DateTime
-	$(CP)     lib/DateTime/*.pm   $(DESTDIR)$(PERL6_LANG_DIR)/lib/DateTime
-	$(CP)     lib/DateTime/*.pir  $(DESTDIR)$(PERL6_LANG_DIR)/lib/DateTime
 
 	$(MKPATH)                     $(DESTDIR)$(PARROT_LIB_DIR)/dynext
 	$(CP)     $(DYNPMC) $(DYNOPS) $(DESTDIR)$(PARROT_LIB_DIR)/dynext
@@ -304,7 +304,9 @@ install: all
 	$(CP)     $(PERL6_EXE)        $(DESTDIR)$(PARROT_BIN_DIR)
 	$(CHMOD)  755                 $(DESTDIR)$(PARROT_BIN_DIR)/$(PERL6_EXE)
 	$(MKPATH) 		      $(DESTDIR)$(DOCDIR)/rakudo
+	$(MKPATH) 		      $(DESTDIR)$(DOCDIR)/rakudo/announce
 	$(CP)     $(DOCS)             $(DESTDIR)$(DOCDIR)/rakudo
+	$(CP)     $(DOCS)/announce    $(DESTDIR)$(DOCDIR)/rakudo/announce
 	$(MKPATH) $(DESTDIR)$(MANDIR)/man1
 	-$(POD2MAN) docs/running.pod --name=perl6 > $(DESTDIR)$(MANDIR)/man1/perl6.1
 	-$(POD2MAN) docs/running.pod --name=rakudo > $(DESTDIR)$(MANDIR)/man1/rakudo.1
@@ -421,17 +423,12 @@ $(PMC_DIR)/objectref.pmc : $(PMC_DIR)/objectref_pmc.template build/gen_objectref
 Test.pir: Test.pm perl6.pbc
 	$(PARROT) $(PARROT_ARGS) perl6.pbc $(STAGESTATS) --target=pir --output=Test.pir Test.pm
 
-
-## loadable libraries. This should be refactored into something generic.
-lib/DateTime/strftime.pir: lib/DateTime/strftime.pm perl6.pbc
-	$(PARROT) $(PARROT_ARGS) perl6.pbc $(STAGESTATS) --target=pir --output=lib/DateTime/strftime.pir lib/DateTime/strftime.pm
-
 test    : coretest
 
 fulltest: coretest stresstest
 
 coretest: Test.pir $(PERL6_EXE)
-	PARROT=$(PARROT) $(PERL) t/harness t/00-parrot t/01-sanity t/02-embed
+	$(PERL) t/harness t/00-parrot t/01-sanity t/02-embed
 
 # Run the spectests that we know work.
 spectest_regression: spectest
@@ -449,17 +446,17 @@ stresstest: testable t/spectest.data
 
 spectest_checkout : t/spec
 t/spec :
-	svn co "http://svn.pugscode.org/pugs/t/spec" t/spec
+	git clone git://github.com/perl6/roast.git t/spec
 
 spectest_update :
-	-cd t/spec && svn up
+	-cd t/spec && git pull
 
 
 rakudo_test_run.tar.gz: testable t/spectest.data
 	- $(HARNESS_WITH_FUDGE_JOBS) --tests-from-file=t/spectest.data --archive rakudo_test_run.tar.gz --parrot_revision @revision@
 
 spectest_smolder: rakudo_test_run.tar.gz
-	curl -F architecture=@cpuarch@ -F platform=@osname@ -F revision=`git log -1 --pretty=format:%H` -F report_file=@rakudo_test_run.tar.gz http://smolder.plusthree.com/app/public_projects/process_add_report/18
+	./perl6 -e "run qqx[git log -1 --pretty=format:%H].fmt(qq[curl -F architecture=@cpuarch@ -F platform=@osname@ -F revision=%s -F report_file=@rakudo_test_run.tar.gz -F username=parrot-autobot -F password=qa_rocks http://smolder.parrot.org/app/projects/process_add_report/5])"
 
 testable : all spectest_checkout spectest_update
 
@@ -512,8 +509,8 @@ help:
 	@echo "  fulltest:          Run sanity tests and spectests."
 	@echo "  spectest_full:     Run all tests of the official test suite."
 	@echo "  localtest:         Run the official tests given in t/localtest.data."
-	@echo "  spectest_checkout: Performs svn checkout of official test suite."
-	@echo "  spectest_update:   Performs svn update of official test suite."
+	@echo "  spectest_checkout: Performs git checkout of official test suite."
+	@echo "  spectest_update:   Performs git update of official test suite."
 	@echo "  testable:          Create the perl6 executable, compile the Test library,"
 	@echo "                     and update official test suite."
 	@echo ""
@@ -548,9 +545,8 @@ perlcritic:
 manifest:
 	echo MANIFEST >MANIFEST
 	git ls-files | $(PERL) -ne '/^\./ || print' >>MANIFEST
-	rm -rf t/spec
-	svn export "http://svn.pugscode.org/pugs/t/spec" t/spec
-	find t/spec -type f >>MANIFEST
+	cd t/spec && git clean -xdf
+	find t/spec -type f | grep -v '\.git' >>MANIFEST
 	sort -u -o MANIFEST MANIFEST
 
 release: manifest
@@ -584,3 +580,11 @@ $(OPS_DIR)/$(OPS)$(LOAD_EXT): $(OPS_DIR)/$(OPS_SOURCE) src/binder/bind.h $(DYNPM
 	cd $(OPS_DIR) && $(OPS2C) C --dynamic $(OPS_SOURCE)
 	cd $(OPS_DIR) && $(CC) -c @cc_o_out@$(OPS)$(O) $(CINCLUDES) $(CFLAGS) $(OPS).c
 	cd $(OPS_DIR) && $(LD) @ld_out@$(OPS)$(LOAD_EXT) $(OPS)$(O) $(LINKARGS)
+
+
+## This target is temporary for producing a trace/profile of core.pm 
+## compilation (to improve compiler performance).
+
+parsetrace: $(S1_PERL6_PBC) src/gen/core.pm
+	$(PARROT) $(PARROT_ARGS) $(S1_PERL6_PBC) --parsetrace --target=pir \
+	    $(STAGESTATS) src/gen/core.pm > $(CORE_PIR) 2>parsetrace.$$$$

@@ -17,11 +17,6 @@ Num - Perl 6 numbers
     p6meta = get_hll_global ['Mu'], '$!P6META'
     numproto = p6meta.'new_class'('Num', 'parent'=>'parrot;Float Cool')
 
-    # Override the proto's ACCEPT method so we also accept Ints.
-    .const 'Sub' $P0 = "Num::ACCEPTS"
-    $P1 = typeof numproto
-    $P1.'add_method'('ACCEPTS', $P0)
-
     # Map Parrot Float to Rakudo Num
     $P0 = getinterp
     $P1 = get_class ['Float']
@@ -29,22 +24,6 @@ Num - Perl 6 numbers
     $P0.'hll_map'($P1, $P2)
 .end
 
-
-.sub 'Num::ACCEPTS' :anon :method
-    .param pmc topic
-
-    ##  first, try our superclass .ACCEPTS
-    $P0 = get_hll_global 'Any'
-    $P1 = find_method $P0, 'ACCEPTS'
-    $I0 = self.$P1(topic)
-    unless $I0 goto try_int
-    .return ($I0)
-
-  try_int:
-    $P0 = get_hll_global 'Int'
-    $I0 = $P0.'ACCEPTS'(topic)
-    .return ($I0)
-.end
 
 =item succ and pred
 
@@ -215,16 +194,16 @@ finish:
     .return (result)
 
 #errors
-ERANGE: 
-    die "DON'T PANIC! The radix is out of range (2..36 only)"
+ERANGE:
+    die "The radix is out of range (2..36 only)"
 EINVALIDCHAR:
-    $S0 = concat "DON'T PANIC! Invalid character (", $S0
+    $S0 = concat "Invalid character (", $S0
     $S0 = concat $S0, ")! Please try again :) "
     die $S0
 EBASENOEXP:
-    die "DON'T PANIC! You gave us a base for the magnitude, but you forgot the exponent."
+    die "You gave us a base for the magnitude, but you forgot the exponent."
 EEXPNOBASE:
-    die "DON'T PANIC! You gave us an exponent for the magnitude, but you forgot the base."
+    die "You gave us an exponent for the magnitude, but you forgot the base."
 .end
 
 

@@ -1,5 +1,5 @@
 our multi infix:<~~>(Mu $topic, Mu $matcher) {
-    $matcher.ACCEPTS($topic)
+    ? $matcher.ACCEPTS($topic)
 }
 
 our multi infix:<~~>(Mu $topic, Regex $matcher) {
@@ -9,16 +9,6 @@ our multi infix:<~~>(Mu $topic, Regex $matcher) {
         %r = $P0.'ACCEPTS'($P1)
         store_dynamic_lex '$/', %r
     };
-}
-
-class Substitution { ... }
-our multi infix:<~~>(Mu $topic is rw, Substitution $matcher) {
-    $matcher.ACCEPTS($topic)
-}
-
-
-our multi infix:<!~~>(Mu $topic, Mu $matcher) {
-    $matcher.REJECTS($topic)
 }
 
 our multi prefix:<?>(Mu $a) {
@@ -123,9 +113,9 @@ our sub none(*@items) {
     Junction.new(@items, :none);
 }
 
-our multi prefix:<not>($x) { !$x }
+our multi prefix:<not>(Mu $x) { !$x }
 
-our multi prefix:<so>($x) { ?$x }
+our multi prefix:<so>(Mu $x) { ?$x }
 
 our multi prefix:sym<+^>($x) {
     pir::bnot__PP($x)
@@ -136,35 +126,35 @@ our sub undefine(Mu \$x) {
     $x = $undefined;
 }
 
-our multi infix:<does>(Mu \$do-it-to-me, Role $r) {
-    &infix:<does>($do-it-to-me, $r!select)
+our multi infix:<does>(Mu \$doee, Role $r) {
+    &infix:<does>($doee, $r!select)
 }
 
-our multi infix:<does>(Mu \$do-it-to-me, ConcreteRole $r) {
-    my $applicator = $r.^applier_for($do-it-to-me);
-    $applicator.apply($do-it-to-me, [$r]);
-    $do-it-to-me
+our multi infix:<does>(Mu \$doee, ConcreteRole $r) {
+    my $applicator = $r.^applier_for($doee);
+    $applicator.apply($doee, [$r]);
+    $doee
 }
 
-our multi infix:<does>(Mu \$do-it-to-me, Parcel $roles) {
+our multi infix:<does>(Mu \$doee, Parcel $roles) {
     my $*SCOPE = 'my';
     my $mr = RoleHOW.new();
     for @($roles) -> $r {
         $mr.^add_composable($r);
     }
     my $r = $mr.^compose();
-    $do-it-to-me does $r;
+    $doee does $r;
 }
 
-our multi infix:<does>(Mu \$do-it-to-me, \$value) {
+our multi infix:<does>(Mu \$doee, \$value) {
     # Need to manufacture a role here.
     my $r = RoleHOW.new();
     $r.^add_method($value.WHAT.perl, method () { $value });
-    $do-it-to-me does $r.^compose()
+    $doee does $r.^compose()
 }
 
-our multi infix:<but>(Mu \$do-it-to-me, \$r) {
-    $do-it-to-me.clone() does $r
+our multi infix:<but>(Mu \$doee, \$r) {
+    $doee.clone() does $r
 }
 
 our multi infix:<before>($a, $b) {
@@ -220,11 +210,15 @@ our sub hash(*@list, *%hash) {
 }
 
 our multi infix:sym<//>(Mu $a, Mu $b) {
-    $a.defined ?? $a !! $b
+     $a.defined ?? $a !! $b
+}
+
+our multi infix:sym<orelse>(Mu $a, Mu $b) {
+     $a.defined ?? $a !! $b
 }
 
 our multi infix:<==>($a, $b) {
-    pir::iseq__INN(+$a, +$b) ?? True !! False
+    +$a == +$b;
 }
 
 our multi infix:<!=>(Mu $a, Mu $b) {
@@ -232,19 +226,19 @@ our multi infix:<!=>(Mu $a, Mu $b) {
 }
 
 our multi infix:«<»($a, $b) {
-    pir::islt__INN(+$a, +$b) ?? True !! False
+    +$a < +$b;
 }
 
 our multi infix:«<=»($a, $b) {
-    pir::isle__INN(+$a, +$b) ?? True !! False
+    +$a <= +$b;
 }
 
 our multi infix:«>»($a, $b) {
-    pir::isgt__INN(+$a, +$b) ?? True !! False
+    +$a > +$b;
 }
 
 our multi infix:«>=»($a, $b) {
-    pir::isge__INN(+$a, +$b) ?? True !! False
+    +$a >= +$b;
 }
 
 our multi infix:<eq>($a, $b) {
@@ -272,9 +266,16 @@ our multi infix:<ge>($a, $b) {
 }
 
 # XXX Lazy version would be nice in the future too.
-our multi infix:<xx>(Mu \$item, $n) {
-    (1..$n).map( { $item } )
+class Whatever { ... }
+
+our multi infix:<xx>(Mu \$item, Whatever) {
+    (1..*).map( { $item } )
 }
+
+our multi infix:<xx>(Mu \$item, $n) {
+    (1..+$n).map( { $item } )
+}
+
 
 our multi prefix:<|>(@a) { @a.Capture }
 our multi prefix:<|>(%h) { %h.Capture }
@@ -331,123 +332,115 @@ our multi sub item($item) {
     $item
 }
 
-class Whatever { ... }
 
-our multi sub infix:<...>(Code $lhs, $rhs) {
-    my $limit;
-    $limit = $rhs if !($rhs ~~ Whatever);
-    my $last;
+our sub _HELPER_generate-series(@lhs, $rhs , :$exclude-limit) {
+    my sub get-next-closure (@lhs, $limit? ) {
+        fail "Need something on the LHS" unless @lhs.elems;
+        fail "Need more items on the LHS" if @lhs[*-1] ~~ Code && @lhs[*-1] !~~ Multi && @lhs[*-1].count != Inf && @lhs.elems < @lhs[*-1].count;
+
+        #BEWARE: Here be ugliness
+        if @lhs[* - 1] ~~ Code { # case: (a,b,c,{code}) ... *
+            return @lhs[*-1] if @lhs[*-1] !~~ Multi;
+            return @lhs[*-1].candidates[0] if @lhs[*-1].candidates.elems == 1;
+            if (@lhs[*-1].candidates>>.count).grep( * == 2) {
+                return { @lhs[*-1]($^a,$^b) } ; # case: (a,b,c,&[+] ... *
+            } else {
+                fail "Don't know how to handle Multi on the lhs yet";
+            }
+        }
+        return { .succ }  if @lhs.elems == 1 && $limit ~~ Code;
+        return { $_ } if @lhs.elems > 1 && @lhs[*-1] cmp @lhs[*-2] == 0 ;  # case: (a , a) ... *
+
+        if  @lhs[*-1] ~~ Str ||  $limit ~~ Str {
+            if @lhs[*-1].chars == 1 && $limit.defined && $limit.chars == 1 {
+                return { .ord.succ.chr } if @lhs[*-1] lt  $limit;# case (... , non-number) ... limit
+                return { .ord.pred.chr } if @lhs[*-1] gt  $limit;# case (... , non-number) ... limit
+            }
+            return { .succ } if $limit.defined && @lhs[*-1] lt  $limit;# case (... , non-number) ... limit
+            return { .pred } if $limit.defined && @lhs[*-1] gt  $limit;# case (... , non-number) ... limit
+            return { .pred } if @lhs.elems > 1 && @lhs[*-2] gt  @lhs[*-1];# case (non-number , another-smaller-non-number) ... *
+            return { .succ } ;# case (non-number , another-non-number) ... *
+        }
+        return { .pred } if @lhs.elems == 1 && $limit.defined && $limit before @lhs[* - 1];  # case: (a) ... b where b before a
+        return { .succ } if @lhs.elems == 1 ;  # case: (a) ... *
+
+        my $diff = @lhs[*-1] - @lhs[*-2];
+        return { $_ + $diff } if @lhs.elems == 2 || @lhs[*-2] - @lhs[*-3] == $diff ; #Case Arithmetic series
+
+        if @lhs[*-2] / @lhs[*-3] == @lhs[*-1] / @lhs[*-2] { #Case geometric series
+            my $factor = @lhs[*-2] / @lhs[*-3];
+            if $factor ~~ ::Rat && $factor.denominator == 1 {
+                $factor = $factor.Int;
+            }
+            return { $_ * $factor } ;
+        }
+        fail "Unable to figure out pattern of series";
+    }
+
+    my sub infinite-series (@lhs, $limit ) {
+        gather {
+            my $i = 0;
+            while @lhs[$i+1].defined { take @lhs[$i]; $i++; } #We blindly take all elems of the LHS except last one.
+            if @lhs[$i] !~~ Code { take @lhs[$i]; $i++; }     #We take the last element only when it is not code
+
+            my $next = get-next-closure(@lhs , $limit );
+            my $arity = $next.count;
+            my @args=@lhs[$i-($arity ~~ Inf ?? $i !! $arity) .. $i-1]; #We make sure there are $arity elems in args
+
+            loop {                         #Then we extrapolate using $next and the $args
+                my $current = $next.(|@args) // last;
+                take $current ;
+                if $arity {
+                    @args.push($current) ;
+                    @args.munch(1) if @args.elems > $arity
+                }
+            }
+        }
+    }
+
+    my $limit = ($rhs ~~ Whatever ?? Any !! $rhs);
+    return infinite-series(@lhs , $limit) if $rhs ~~ Whatever; #shortcut infinite series so we avoid the comparisions
+
+    die 'Sequence limit cannot be a multi-sub or multi-method' if $limit ~~ Multi;
+    my $series = infinite-series(@lhs , $limit);
+
     gather {
-        loop {
-            my $i = $lhs.();
-            my $j = $i;
-            last if $limit.defined && $last.defined && !($j eqv $limit)
-                 && ($last before $limit before $j || $j before $limit before $last);
-            take $j;
-            last if $limit.defined && $j eqv $limit;
-            $last = $j;
+        if $limit ~~ Code && $limit.count > 1 {
+            my @limit-args;
+            while $series {
+                @limit-args.shift if @limit-args == $limit.count;
+                my $val = $series.shift;
+                @limit-args.push($val);
+                my $done = @limit-args >= $limit.arity && $limit(|@limit-args);
+                take $val unless $done && $exclude-limit;
+                last if $done;
+            }
+        }
+        else {
+            while $series {
+                my $val = $series.shift();
+                if $val ~~ $limit {
+                    take $val unless $exclude-limit ;
+                    last ;
+                };
+                take $val;
+            }
         }
     }
 }
 
-our multi sub infix:<...>(@lhs is copy, $rhs) {
-    my sub succ-or-pred($lhs, $rhs) {
-        if $lhs ~~ Str && $rhs ~~ Str && $lhs.chars == 1 && $rhs.chars == 1 {
-            if $lhs cmp $rhs != 1 {
-                -> $x { $x.ord.succ.chr };
-            } else {
-                -> $x { $x.ord.pred.chr };
-            }
-        } elsif $rhs ~~ Whatever || $lhs cmp $rhs != 1 {
-            -> $x { $x.succ };
-        } else {
-            -> $x { $x.pred };
-        }
-    }
-
-    my sub succ-or-pred2($lhs0, $lhs1, $rhs) {
-        if $lhs1 cmp $lhs0 == 0 {
-            $next = { $_ };
-        } else {
-            $next = succ-or-pred($lhs1, $rhs);
-        }
-    }
-
-    my sub is-on-the-wrong-side($first , $before_last , $last , $limit) {
-        if $first ~~ Numeric && $before_last ~~ Numeric && $last ~~ Numeric && $limit ~~ Numeric {
-            return Bool::True if ($before_last > $last && $limit > $first);
-            return Bool::True if ($before_last < $last && $limit < $first);
-        }
-        if $first  ~~ Str && $before_last  ~~ Str && $last  ~~ Str && $limit  ~~ Str {
-            return Bool::True if ($before_last gt $last && $limit gt $first);
-            return Bool::True if ($before_last lt $last && $limit lt $first);
-        }
-        return Bool::False
-    }
-
-    my $limit;
-    $limit = $rhs if !($rhs ~~ Whatever);
-
-    my $is-geometric-switching-sign = Bool::False;
-    my $next;
-    if @lhs[@lhs.elems - 1] ~~ Code {
-        $next = @lhs.pop;
-    } else {
-        given @lhs.elems {
-            when 0 { fail "Need something on the LHS"; }
-            when 1 {
-                $next = succ-or-pred(@lhs[0], $rhs)
-            }
-            default {
-                my $diff = @lhs[*-1] - @lhs[*-2];
-                if $diff == 0 {
-                    $next = succ-or-pred2(@lhs[*-2], @lhs[*-1], $rhs)
-                } elsif @lhs.elems == 2 || @lhs[*-2] - @lhs[*-3] == $diff {
-                    return Nil if is-on-the-wrong-side(@lhs[0] , @lhs[*-2] , @lhs[*-1] , $rhs);
-                    $next = { $_ + $diff };
-                } elsif @lhs[*-2] / @lhs[*-3] == @lhs[*-1] / @lhs[*-2] {
-                    $is-geometric-switching-sign = (@lhs[*-2] * @lhs[*-1] < 0);
-                    return Nil if is-on-the-wrong-side(@lhs[0] , @lhs[*-2] , @lhs[*-1] , $rhs) && !$is-geometric-switching-sign;
-                    $next = { $_ * (@lhs[*-2] / @lhs[*-3]) };
-                } else {
-                    fail "Unable to figure out pattern of series";
-                }
-            }
-        }
-    }
-
-    my $arity = any( $next.signature.params>>.slurpy ) ?? Inf !! $next.count;
-
-    gather {
-        my @args;
-        my $j;
-        my $top = $arity min @lhs.elems;
-        for @lhs.kv -> $i, $v {
-            $j = $v;
-            take $v;
-            @args.push($v) if $i >= @lhs.elems - $top;
-        }
-
-        if !$limit.defined || $limit cmp $j != 0 {
-            loop {
-                my $i = $next.(|@args) // last;
-                my $j = $i;
-
-                my $cur_cmp = 1;
-                if $limit.defined {
-                    $cur_cmp = $limit cmp $j;
-                    last if (@args[*-1] cmp $limit) == $cur_cmp && !$is-geometric-switching-sign;
-                }
-                take $j;
-                last if $cur_cmp == 0;
-
-                @args.push($j);
-                while @args.elems > $arity {
-                    @args.shift;
-                }
-            }
-        }
-    }
+our multi sub infix:<...>(@lhs, $limit) {
+    _HELPER_generate-series(@lhs, $limit )
+}
+our multi sub infix:<...^>(@lhs, $limit) {
+    _HELPER_generate-series(@lhs, $limit , :exclude-limit)
+}
+our multi sub infix:<...^>($lhs , $limit) {
+    $lhs.list ...^ $limit;
+}
+our multi sub infix:<...^>(@lhs, @rhs) {
+    fail "Need something on RHS" if !@rhs;
+    (@lhs ...^ @rhs.shift), @rhs
 }
 
 our multi sub infix:<...>($lhs, $rhs) {
@@ -506,12 +499,14 @@ our multi sub infix:<eqv>(Numeric $a, Numeric $b) {
 our multi sub infix:<Z>($lhs, $rhs) {
     my $lhs-list = flat($lhs.list);
     my $rhs-list = flat($rhs.list);
+    my ($a, $b);
     gather while ?$lhs-list && ?$rhs-list {
-        my $a = $lhs-list.shift;
-        my $b = $rhs-list.shift;
-        take $a;
-        take $b;
-    }
+        $a = $lhs-list.shift unless $lhs-list[0] ~~ ::Whatever;
+        take -> $q is copy { $q }($a);
+          # Workaround for RT #77302.
+        $b = $rhs-list.shift unless $rhs-list[0] ~~ ::Whatever;
+        take -> $q is copy { $q }($b);
+   }
 }
 
 our multi sub infix:<X>($lhs, $rhs) {
@@ -528,12 +523,14 @@ our multi sub infix:<X>($lhs, $rhs) {
 
 # if we want &infix:<||> accessible (for example for meta operators), we need
 # to define it, because the normal || is short-circuit and special cased by
-# the grammar. Same goes for 'or', '&&' and 'and'
+# the grammar. Same goes for 'or', '&&', 'and', '^^', and 'xor'
 
 our multi sub infix:<||>(Mu $a, Mu $b) { $a || $b }
 our multi sub infix:<or>(Mu $a, Mu $b) { $a or $b }
 our multi sub infix:<&&>(Mu $a, Mu $b) { $a && $b }
 our multi sub infix:<and>(Mu $a, Mu $b) { $a and $b }
+our multi sub infix:<^^>(Mu $a, Mu $b) { $a ^^ $b }
+our multi sub infix:<xor>(Mu $a, Mu $b) { $a xor $b }
 
 # Eliminate use of this one, but keep the pir around for
 # the moment, as it may come in handy elsewhere.

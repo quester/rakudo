@@ -61,7 +61,7 @@ for my $tfile (@tfiles) {
 
 # Prepare arrays and hashes to gather and accumulate test statistics
 my @col = qw(pass fail todo skip plan spec);
-my @syn = qw(S02 S03 S04 S05 S06 S07 S09 S10 S11 S12 S13 S14 S16 S17 S28 S29 S32 int);
+my @syn = qw(S02 S03 S04 S05 S06 S07 S09 S10 S11 S12 S13 S14 S16 S17 S19 S28 S29 S32 int);
 my %syn; # number of test scripts per Synopsis
 my %sum; # total pass/fail/todo/skip/test/plan per Synposis
 my $syn;
@@ -268,13 +268,13 @@ sub begin {       # this constructor starts simple relative benchmarking
                 $line = <$file_in>; chomp $line;
             } # ends on the ' ],' line after the test_history
             $line = <$file_in>; chomp $line;
-            if ( $line =~ m/ "test_microseconds":{/i ) {
-                warn "begin reached 'test_microseconds'\n";
-            }
+            # if ( $line =~ m/ "test_microseconds":{/i ) {
+            #     warn "begin reached 'test_microseconds'\n";
+            # }
         }
     }
     open( $self->{'file_out'}, '>', 'docs/test_summary.times.tmp') or die "cannot create docs/test_summary.times.tmp: $!";
-    my $parrot_version = qx{./perl6 -e'print %*VM<config><revision>'};
+    my $parrot_version = qx{./perl6 -e'print \$*VM<config><revision>'};
     my $rakudo_version = qx{git log --oneline --max-count=1 .}; chomp $rakudo_version;
     $rakudo_version =~ s/\\/\\\\/g; # escape all backslashes
     $rakudo_version =~ s/\"/\\\"/g; # escape all double quotes

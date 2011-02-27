@@ -1,5 +1,6 @@
 role Hash { ... }
 class Range { ... }
+class Match { ... }
 
 augment class Any {
     method Seq() { 
@@ -23,7 +24,7 @@ augment class Any {
     }
 
     our Str multi method join($separator = '') {
-        pir::join__SsP($separator, self.flat.eager);
+        ~pir::join__SsP($separator, self.flat.eager);
     }
 
     multi method elems() {
@@ -33,6 +34,13 @@ augment class Any {
     multi method flat() { self.list.flat }
 
     our multi method map(&block) { self.list.map(&block); }
+
+    our multi method map(%block) {
+        die "Can't call map() with a Hash argument, Callable required\n"
+            ~ "You probably wrote a Hash composer accidentally - try to\n"
+            ~ "disambiguate it with a ; directly after the opening brace";
+
+    }
 
     our multi method sort(&by = &infix:<cmp>) { self.list.sort(&by); }
 
@@ -56,13 +64,7 @@ augment class Any {
         }
     }
 
-    multi method reverse() {
-        my @result = ();
-        for @.list {
-            @result.unshift($_);
-        }
-        return @result;
-    }
+    multi method reverse() { self.flat.reverse }
 
     multi method end() { self.elems - 1; }
 
@@ -70,17 +72,18 @@ augment class Any {
     # And use the FIRST: phaser
     multi method min($by = { $^a cmp $^b}) {
         die "Unable to handle non-closure Ordering yet" unless $by ~~ Code;
-        my $cmp = $by.signature.params.elems == 2 ?? $by !! { $by($^a) cmp $by($^b) };
+        my $cmp = $by.arity == 2 ?? $by !! { $by($^a) cmp $by($^b) };
 
         my $min = +Inf;
         my $first-time = Bool::True;
         for @.list {
+            .defined or next;
             if $first-time {
                 $min = $_;
                 $first-time = Bool::False;
                 next;
             }
-            if $cmp($_, $min) == -1 {
+            if $cmp($_, $min) < 0 {
                 $min = $_;
             }
         }
@@ -91,17 +94,18 @@ augment class Any {
     # And use the FIRST: phaser
     multi method max($by = { $^a cmp $^b}) {
         die "Unable to handle non-closure Ordering yet" unless $by ~~ Code;
-        my $cmp = $by.signature.params.elems == 2 ?? $by !! { $by($^a) cmp $by($^b) };
+        my $cmp = $by.arity == 2 ?? $by !! { $by($^a) cmp $by($^b) };
 
         my $max = -Inf;
         my $first-time = Bool::True;
         for @.list {
+            .defined or next;
             if $first-time {
                 $max = $_;
                 $first-time = Bool::False;
                 next;
             }
-            if $cmp($_, $max) == 1 {
+            if $cmp($_, $max) > 0 {
                 $max = $_;
             }
         }
@@ -112,7 +116,7 @@ augment class Any {
     # And use the FIRST: phaser
     multi method minmax($by = { $^a cmp $^b}) {
         die "Unable to handle non-closure Ordering yet" unless $by ~~ Code;
-        my $cmp = $by.signature.params.elems == 2 ?? $by !! { $by($^a) cmp $by($^b) };
+        my $cmp = $by.arity == 2 ?? $by !! { $by($^a) cmp $by($^b) };
 
         my $min = +Inf;
         my $max = -Inf;
@@ -121,6 +125,8 @@ augment class Any {
 
         my $first-time = Bool::True;
         for @.list {
+            .defined or next;
+
             when Range {
                 if $first-time {
                     $min = $_.min;
@@ -130,11 +136,11 @@ augment class Any {
                     $first-time = Bool::False;
                     next;
                 }
-                if $cmp($_.min, $min) == -1 {
+                if $cmp($_.min, $min) < 0 {
                     $min = $_;
                     $excludes_min = $_.excludes_min;
                 }
-                if $cmp($_.max, $max) == 1 {
+                if $cmp($_.max, $max) > 0 {
                     $max = $_;
                     $excludes_max = $_.excludes_max;
                 }
@@ -146,11 +152,11 @@ augment class Any {
                 $first-time = Bool::False;
                 next;
             }
-            if $cmp($_, $min) == -1 {
+            if $cmp($_, $min) < 0 {
                 $min = $_;
                 $excludes_min = Bool::False;
             }
-            if $cmp($_, $max) == 1 {
+            if $cmp($_, $max) > 0 {
                 $max = $_;
                 $excludes_max = Bool::False;
             }
@@ -161,47 +167,57 @@ augment class Any {
                   :excludes_max($excludes_max));
     }
 
-    #CHEAT: Simplified version which we can hopefully sneak by ng.
-    multi method pick() {
-        my @l = @.list.Seq;
-        @l[floor(@l.elems.rand)];
-    }
+    multi method pick($num is copy = 1, Bool :$replace) {
+        die "Option :replace is deprecated -- please use .roll"
+            if $replace;
 
-    multi method pick($num is copy = 1, :$replace) {
         my @l = @.list.Seq;
 
         if ($num == 1) {
             return @l[floor(@l.elems.rand)];
         }
 
-        if $replace {
-            gather {
-                while ($num > 0) {
-                    my $idx = floor(@l.elems.rand());
-                    take @l[$idx];
-                    --$num;
-                }
-            }
-        } else {
-            gather {
-                while ($num > 0 and @l.elems > 0) {
-                    my $idx = floor(@l.elems.rand());
-                    take @l[$idx];
-                    @l.splice($idx,1);
-                    --$num;
-                }
+        gather {
+            while ($num > 0 and @l.elems > 0) {
+                my $idx = floor(@l.elems.rand());
+                take @l[$idx];
+                @l.splice($idx,1);
+                --$num;
             }
         }
     }
 
-    multi method pick(Whatever, :$replace) {
-        self.pick(Inf, :$replace);
+    multi method pick(Whatever, Bool :$replace) {
+        die "Option :replace is deprecated -- please use .roll"
+            if $replace;
+
+        self.pick(Inf);
     }
 
-    multi method classify($test) {
+    multi method roll($num is copy = 1) {
+        my @l = @.list.Seq;
+
+        if ($num == 1) {
+            return @l[floor(@l.elems.rand)];
+        }
+
+        gather {
+            while ($num > 0) {
+                my $idx = floor(@l.elems.rand());
+                take @l[$idx];
+                --$num;
+            }
+        }
+    }
+
+    multi method roll(Whatever) {
+        self.roll(Inf);
+    }
+
+    multi method classify(&test) {
         my %result;
         for @.list {
-            my $k = $_ ~~ $test;
+            my $k = test $_;
             %result{$k} //= [];
             %result{$k}.push: $_;
         }
@@ -281,7 +297,11 @@ augment class Any {
 
     our multi method postcircumfix:<[ ]>() { self.list }
 
-    our multi method postcircumfix:<[ ]>(&block) { self[&block(self.elems)]; }
+    our multi method postcircumfix:<[ ]>(Whatever $w) { 
+        self[0..(self.elems-1)]
+    }
+
+    our multi method postcircumfix:<[ ]>(&block) { self[&block(|(self.elems xx &block.count))]; }
 
     our multi method postcircumfix:<[ ]>(@pos) {
         my $result = pir::new__ps('ResizablePMCArray');
@@ -315,6 +335,10 @@ augment class Any {
         self.values()
     }
 
+    our multi method postcircumfix:<{ }>(Whatever $w) {
+        self.{self.keys}
+    }
+
     our multi method postcircumfix:<{ }>(@keys) {
         my $result = pir::new__ps('ResizablePMCArray');
         for @keys {
@@ -329,7 +353,7 @@ augment class Any {
     our multi method postcircumfix:<{ }>($key) { self.at_key($key) }
 
     method at_key($key) {
-        fail "postcircumfix:<{ }> not defined for type {self.WHAT}"
+        fail "postcircumfix:<\{ \}> not defined for type {self.WHAT}"
             if self.defined;
         my $z = Any!butWHENCE(
                     { self.defined || &infix:<=>(self, Hash.new);
@@ -337,6 +361,12 @@ augment class Any {
                     }
                 );
     }
+
+    # XXX Workarounds for Match objects which also ~~ Positional
+    # (http://irclog.perlgeek.de/perl6/2010-09-07#i_2795277)
+    # and RT #75868
+    our multi method postcircumfix:<[ ]>(Match $m) { self.[+$m] }
+    our multi method postcircumfix:<{ }>(Match $m) { self.{~$m} }
 
     method !butWHENCE(&by) {
         pir::setprop__0PsP(pir::clone__PP(pir::descalarref__PP(self)), 'WHENCE', &by);
@@ -350,17 +380,24 @@ multi sub reverse(*@v) { @v.reverse; }
 proto sub end(@array) { @array.end; }
 proto sub grep(Mu $test, *@values) { @values.grep($test); }
 proto sub first(Mu $test, @values) { @values.first($test); }
+multi sub first(Mu $test, *@values) { @values.first($test); }
 proto sub min($by, *@values) { @values.min($by); }
 proto sub max($by, *@values) { @values.max($by); }
 proto sub minmax($by, *@values) { @values.minmax($by); }
 proto sub uniq(@values) { @values.uniq; }
-proto sub pick ($num, :$replace, *@values) { @values.pick($num, :$replace); }
-proto sub map(&mapper, *@values) { @values.map(&mapper); }
+multi sub uniq(*@values) { @values.uniq; }
+proto sub pick ($num, Bool :$replace, *@values) {
+    @values.pick($num, :$replace);
+}
+proto sub roll ($num, *@values) { @values.roll($num); }
+proto sub map($mapper, *@values) { @values.map($mapper); }
 proto sub kv(@array) { @array.kv; }
 proto sub keys(@array) { @array.keys; }
 proto sub values(@array) { @array.values; }
 proto sub pairs(@array) { @array.pairs; }
 proto sub rotate(@array, $n = 1) { @array.rotate($n); }
+proto sub elems(@array) { @array.elems; }
+multi sub elems(*@list) { @list.elems; }
 
 multi sub sort(*@values, :&by) {
     my &x = &by // (@values[0] ~~ Callable ?? @values.shift !! &infix:<cmp> );

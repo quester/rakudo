@@ -7,19 +7,23 @@ method backtrace_for($exception) {
         # Runtime error. Start with the error message.
         my $trace := pir::getattribute__pps($exception, 'message');
         
-        # If top frame is 'die' or warn, drop it from the top.
-        if ~@backtrace[0]<sub> eq '&die' || ~@backtrace[0]<sub> eq '&warn' {
+        # If top frame is 'die' or warn, drop it from the top. Same for the
+        # attribute accessors.
+        if @backtrace[0]<annotations><invizible_frame> {
             @backtrace.shift;
         }
 
         # If it's just a warning, then we want to just append a line and
         # file to the error and be done.
         if self.is_warning($exception) {
-            my $location := @backtrace[0]<annotations>;
-            $trace := $trace ~ " at " ~
-                ($location<line> ?? 'line ' ~ $location<line> !! '<unknown line>') ~
-                ($location<file> ?? ':' ~ $location<file>     !! ''              ) ~
-                "\n";
+            my $i := 0;
+            my $array_bound := +@backtrace - 1;
+            while $i < $array_bound
+                    && @backtrace[$i]<annotations><file> eq 'CORE.setting' {
+                $i++;
+            }
+
+            $trace := $trace ~ self.backtrace_line(@backtrace[$i]<sub>, @backtrace[$i]<annotations>);
             return $trace;
         }
 

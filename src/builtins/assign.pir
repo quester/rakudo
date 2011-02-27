@@ -13,6 +13,8 @@ src/builtins/assign.pir - assignment operations
     .param pmc cont
     .param pmc source
 
+    .annotate 'invizible_frame', 1
+
   cont_loop:
     # If the lhs isn't marked rw, throw exception
     .local pmc rw
@@ -21,21 +23,17 @@ src/builtins/assign.pir - assignment operations
     '&die'('Cannot modify readonly value')
   rw_ok:
 
-    # If the lhs isn't a scalar container, delegate to
+    # If the lhs isn't a Perl6Scalar, delegate to
     # object's STORE method.
-    $P0 = getprop 'scalar', cont
-    unless null $P0 goto scalar_store
+    $I0 = isa cont, ['Perl6Scalar']
+    if $I0 goto scalar_store
     $I0 = can cont, '!STORE'
     if $I0 goto cont_store
 
     # We should never arrive here.  Anything that is marked 'rw'
-    # should either be a Perl6Scalar (with the 'scalar' property
-    # set) or a container that understands !STORE, such as Hash or Array.
-    # However, there's some legacy code that fails to set 'scalar',
-    # so we patch it in here to keep things going.
-    $I0 = isa cont, ['ObjectRef']
-    unless $I0 goto cont_store
-    setprop cont, 'scalar', cont
+    # should either be a Perl6Scalar or a container that understands
+    # !STORE, such as Hash or Array.
+    '&die'('Apart from Scalar, containers used as an lvalue must have a !STORE method')
 
   scalar_store:
     # perform any needed typecheck
@@ -44,7 +42,15 @@ src/builtins/assign.pir - assignment operations
     if null type goto type_ok
     $P0 = type.'ACCEPTS'(source)
     if $P0 goto type_ok
-    '&die'('Type check failed for assignment')
+    .local string error_msg
+    error_msg = "Type check failed for assignment\n    Container type: "
+    $S0 = type.'perl'()
+    error_msg = concat error_msg, $S0
+    error_msg = concat error_msg, "\n               Got: "
+    $P0 = source.'WHAT'()
+    $S0 = $P0.'perl'()
+    error_msg = concat error_msg, $S0
+    '&die'(error_msg)
   type_ok:
 
     # Dereference the scalar LHS.  If the thing we're
@@ -67,10 +73,8 @@ src/builtins/assign.pir - assignment operations
 
   scalar_assign:
     # check for Nil assignment
-    $I0 = isa source, ['Parcel']
+    $I0 = isa source, ['Nil']
     unless $I0 goto item_assign
-    $I0 = elements source
-    if $I0 goto item_assign
   nil_assign:
     source = getprop 'type', cont
     unless null source goto have_source
@@ -88,6 +92,8 @@ src/builtins/assign.pir - assignment operations
 
   cont_store:
     .tailcall cont.'!STORE'(source)
+
+    .annotate 'invizible_frame', 1
 .end
 
 

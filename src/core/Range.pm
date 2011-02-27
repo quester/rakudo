@@ -4,75 +4,107 @@ class Range is Iterable does Positional {
     has $.max;
     has $.excludes_max = Bool::False;
 
-    multi method new($min,
-                     $max,
+    multi method new(::T $min, T $max,
                      Bool :$excludes_min = Bool::False,
                      Bool :$excludes_max = Bool::False) {
-        self.bless(*, :min($min ~~ Whatever ?? -Inf !! $min),
-                      :max($max ~~ Whatever ?? Inf !! $max),
-                      :excludes_min($excludes_min),
-                      :excludes_max($excludes_max));
+        self.bless(*, :$min, :$max, :$excludes_min, :$excludes_max);
+    }
+
+    multi method new($min, Whatever $max,
+                     Bool :$excludes_min = Bool::False,
+                     Bool :$excludes_max = Bool::False) {
+        self.bless(*, :$min, :max(+Inf), :$excludes_min, :$excludes_max);
+    }
+
+    multi method new(Whatever $min, $max,
+                     Bool :$excludes_min = Bool::False,
+                     Bool :$excludes_max = Bool::False) {
+        self.bless(*, :min(-Inf), :$max, :$excludes_min, :$excludes_max);
+    }
+
+    multi method new(Whatever $min, Whatever $max,
+                     Bool :$excludes_min = Bool::False,
+                     Bool :$excludes_max = Bool::False) {
+        fail "*..* is not a valid range";
+    }
+
+    multi method new($min, $max,
+                     Bool :$excludes_min = Bool::False,
+                     Bool :$excludes_max = Bool::False) {
+        ($min ~~ Real or $max ~~ Real)
+        ?? self.bless(*, :min($min.Numeric), :max($max.Numeric), :$excludes_min, :$excludes_max)
+        !! nextsame;
+    }
+
+    multi method bounds() { ($.min, $.max) }
+    multi method from() { $.min; }
+    multi method to() { $.max; }
+
+    multi method iterator() {
+        RangeIter.new(:value($!excludes_min ?? $!min.succ !! $!min),
+                      :$!max, :$!excludes_max);
+    }
+
+    our Str multi method perl() {
+        ( $.min.perl,
+          ('^' if $.excludes_min),
+          '..',
+          ('^' if $.excludes_max),
+          $.max.perl
+        ).join('');
     }
 
     our Bool multi method ACCEPTS(Range $topic) {
-        ?(($.min == $topic.min)
-          && ($.max == $topic.max)
+        ?(($.min eqv $topic.min)
+          && ($.max eqv $topic.max)
           && ($.excludes_min == $topic.excludes_min)
           && ($.excludes_max == $topic.excludes_min));
-    }
-
-    our method iterator() {
-        my $start = $.min;
-        $start .= succ if $.excludes_min;
-        RangeIter.new( :value( self!max_test($start) ?? $start !! EMPTY ),
-                       :max($.max), 
-                       :excludes_max($.excludes_max));
-    }
-
-    my Bool multi method !min_test($topic) {
-        $.min == -Inf || $.min before $topic || (!$.excludes_min && !($.min after $topic));
-    }
-
-    my Bool multi method !max_test($topic) {
-        $.max == Inf || $topic before $.max || (!$.excludes_max && !($topic after $.max));
     }
 
     our Bool multi method ACCEPTS($topic) {
         ?(self!min_test($topic) && self!max_test($topic))
     }
 
-    multi method bounds() {
-        ($.min, $.max)
+    multi method postcircumfix:<[ ]>(\$parcel) { self.Seq[$parcel]; }
+
+    my Bool multi method !max_test($topic) {
+        $topic before $.max || (!$.excludes_max && !($topic after $.max));
     }
 
-    multi method from() { $.min; }
-    multi method to() { $.max; }
-
-    # Beautiful implementation which does not work yet in ng
-    # our Str multi method perl() {
-    #     [~]
-    #         $.min.perl,
-    #         ("^" if $.excludes_min),
-    #         "..",
-    #         ("^" if $.excludes_max),
-    #         $.max.perl;
-    # }
-
-    our Str multi method perl() {
-        my $min = $.min ~~ ::Whatever ?? "*" !! $.min.perl;
-        my $emin = $.excludes_min ?? "^" !! "";
-        my $max = $.max ~~ ::Whatever ?? "*" !! $.max.perl;
-        my $emax = $.excludes_max ?? "^" !! "";
-        $min ~ $emin ~ ".." ~ $emax ~ $max;
+    my Bool multi method !min_test($topic) {
+        $.min before $topic || (!$.excludes_min && !($.min after $topic));
     }
 
-    multi method fmt($format = '%s', $separator = ' ') {
-        self.map({ .fmt($format)}).join($separator);
+    multi method pick() {
+        self.roll;
     }
 
-    multi method postcircumfix:<[ ]>(Int $index) { self.Seq[$index] }
-    multi method postcircumfix:<[ ]>(@slice)     { self.Seq[@slice] }
+    multi method pick(1) {
+        self.roll;
+    }
+
+    multi method pick(Whatever) {
+        self.pick(Inf);
+    }
+
+    multi method roll() {
+        nextsame unless $.min.isa(Int) and $.max.isa(Int);
+        my $least = $.excludes_min ?? $.min + 1 !! $.min;
+        my $elems = 1 + ($.excludes_max ?? $.max - 1 !! $.max) - $least;
+        $elems ?? ($least + $elems.rand.floor) !! Any;
+    }
+
+    multi method roll($num) {
+        nextsame unless $.min.isa(Int) and $.max.isa(Int);
+        return self.roll if $num == 1;
+        (^$num).map: { self.roll }
+    }
+
+    multi method roll(Whatever) {
+        self.roll(Inf);
+    }
 }
+
 
 our multi sub infix:<..>($min, $max) {
     Range.new($min, $max);

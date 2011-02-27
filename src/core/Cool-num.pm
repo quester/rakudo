@@ -3,6 +3,22 @@ augment class Cool {
         pir::set__NP(self);
     }
 
+    method Real() {
+        (+self).Real;
+    }
+
+    method Int() {
+        (+self).Int;
+    }
+
+    method Rat(::Real $epsilon = 1.0e-6) {
+        (+self).Rat($epsilon);
+    }
+
+    method Num() {
+        (+self).Num;
+    }
+
     method abs($x:) {
         (+$x).abs;
     }
@@ -67,8 +83,12 @@ augment class Cool {
         ~(pir::chr__SI(self))
     }
 
-    our Num method rand() {
-        pir::box__PN(pir::rand__NN(self))
+    our Str multi method chrs() {
+        self>>.chr.join;
+    }
+
+    method rand($x:) {
+        (+$x).rand;
     }
 
     method sin($x: $base = Radians) {
@@ -308,12 +328,19 @@ multi sub postfix:<i>($z) {
     (+$z)i;
 }
 
-proto chr($graph) {
-    $graph.chr;
+proto sub chr($graph) { $graph.chr; }
+proto sub chrs(@graphs) { @graphs.chrs; }
+multi sub chrs(@graphs) { @graphs.chrs; }
+multi sub chrs(*@graphs) { @graphs.chrs; }
+
+proto sub srand($seed) {
+    srand(+$seed);
 }
 
-sub srand(Int $seed = time) {
-    pir::srand__0I($seed);
+INIT {
+    # constant i = 1i;
+    pir::set_hll_global__vsP('i', 1i);
 }
+    
 
 # vim: ft=perl6
